@@ -1,0 +1,574 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SchemaPlaceholder {
+  id        String   @id @default(cuid())
+  note      String   @default("init")
+  createdAt DateTime @default(now())
+}
+
+model Region {
+  id             String   @id @default(cuid())
+  name           String
+  deliveryPrice  Decimal  @db.Decimal(10, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  shops          Shop[]
+  ordersCustomer Order[]  @relation("OrderCustomerRegion")
+  ordersSecondDestination Order[] @relation("OrderSecondDestinationRegion")
+  customers      Customer[] @relation("CustomerRegion")
+  customerPhoneProfiles CustomerPhoneProfile[]
+  preparerShoppingDrafts CompanyPreparerShoppingDraft[]
+}
+
+model CustomerPhoneProfile {
+  id          String   @id @default(cuid())
+  phone       String
+  regionId    String
+  region      Region   @relation(fields: [regionId], references: [id], onDelete: Restrict)
+  locationUrl String   @default("")
+  photoUrl    String   @default("")
+  landmark    String   @default("")
+  alternatePhone String?
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([phone, regionId])
+  @@index([regionId])
+}
+
+model Shop {
+  id           String     @id @default(cuid())
+  name         String
+  ownerName    String     @default("")
+  phone        String     @default("")
+  photoUrl     String     @default("")
+  locationUrl  String
+  regionId     String
+  region       Region     @relation(fields: [regionId], references: [id], onDelete: Restrict)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  employees    Employee[]
+  orders       Order[]
+  customers    Customer[]
+  preparerLinks PreparerShop[]
+  storeBranch  StoreBranch? @relation("StoreBranchShop")
+}
+
+model CompanyPreparer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String   @default("")
+  telegramUserId String @default("")
+  notes     String   @default("")
+  active    Boolean  @default(true)
+  portalToken String @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  shopLinks PreparerShop[]
+  submittedOrders Order[] @relation("OrderSubmittedByPreparer")
+  walletEmployeeId String? @unique
+  walletEmployee   Employee? @relation("CompanyPreparerWalletEmployee", fields: [walletEmployeeId], references: [id], onDelete: SetNull)
+  preparerMonthlySalaryResetMode PreparerMonthlySalaryResetMode @default(calendar_month)
+  preparerMonthlySalaryResetAt DateTime?
+  preparerMonthlySalaryResetEveryDays Int?
+  recordedOrderMoneyEvents OrderCourierMoneyEvent[] @relation("OrderMoneyRecordedByCompanyPreparer")
+  availableForAssignment Boolean @default(true)
+  lastPreparerLat        Float?
+  lastPreparerLng        Float?
+  lastPreparerLocationAt DateTime?
+  prepNotices CompanyPreparerPrepNotice[]
+  shoppingDrafts CompanyPreparerShoppingDraft[]
+  orderListResetAt DateTime @default(now())
+}
+
+model CompanyPreparerPrepNotice {
+  id          String          @id @default(cuid())
+  title       String
+  body        String          @default("")
+  preparerId  String
+  preparer    CompanyPreparer @relation(fields: [preparerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime        @default(now())
+  dismissedAt DateTime?
+  @@index([preparerId, dismissedAt])
+}
+
+model CompanyPreparerShoppingDraft {
+  id         String @id @default(cuid())
+  preparerId String
+  preparer   CompanyPreparer @relation(fields: [preparerId], references: [id], onDelete: Cascade)
+  status     PreparerShoppingDraftStatus @default(draft)
+  titleLine  String @default("")
+  rawListText String @default("")
+  customerRegionId String?
+  customerRegion   Region? @relation(fields: [customerRegionId], references: [id], onDelete: SetNull)
+  customerPhone    String @default("")
+  customerName     String @default("")
+  customerLandmark String @default("")
+  orderTime        String @default("فوري")
+  placesCount      Int?
+  data             Json?
+  sentOrderId      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  @@index([preparerId, status, createdAt])
+}
+
+model PreparerShop {
+  preparerId String
+  preparer   CompanyPreparer @relation(fields: [preparerId], references: [id], onDelete: Cascade)
+  shopId     String
+  shop       Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now())
+  canSubmitOrders Boolean @default(false)
+  @@id([preparerId, shopId])
+  @@index([shopId])
+}
+
+model Customer {
+  id                  String   @id @default(cuid())
+  shopId              String
+  shop                Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name                String   @default("")
+  phone               String
+  alternatePhone      String?
+  customerRegionId    String?
+  customerRegion      Region?  @relation("CustomerRegion", fields: [customerRegionId], references: [id], onDelete: SetNull)
+  customerLocationUrl String   @default("")
+  customerLandmark    String   @default("")
+  customerDoorPhotoUrl String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  orders              Order[]
+  webPushSubscriptions WebPushSubscription[]
+
+  @@index([shopId])
+  @@index([phone])
+}
+
+model Employee {
+  id              String   @id @default(cuid())
+  name            String
+  phone           String
+  shopId          String
+  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  orderPortalToken String  @default(cuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  submittedOrders Order[]  @relation("OrderSubmittedByEmployee")
+  walletTransfersOut WalletPeerTransfer[] @relation("WalletTransferFromEmployee")
+  walletTransfersIn  WalletPeerTransfer[] @relation("WalletTransferToEmployee")
+  walletMiscEntries  EmployeeWalletMiscEntry[]
+  webPushSubscriptions WebPushSubscription[]
+  walletForCompanyPreparer CompanyPreparer? @relation("CompanyPreparerWalletEmployee")
+}
+
+model StaffEmployee {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String   @default("")
+  portalToken String @default(cuid())
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([active, createdAt])
+}
+
+model Courier {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String
+  telegramUserId String? @unique
+  vehicleType CourierVehicleType @default(car)
+  lastCourierLat        Float?
+  lastCourierLng        Float?
+  lastCourierLocationAt DateTime?
+  hiddenFromReports Boolean @default(false)
+  blocked Boolean @default(false)
+  availableForAssignment Boolean @default(true)
+  mandoubTotalsResetAt DateTime?
+  mandoubWalletCarryOverDinar Decimal @default(0) @db.Decimal(14, 4)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  orders    Order[]
+  moneyEvents OrderCourierMoneyEvent[]
+  miscWalletEntries CourierWalletMiscEntry[]
+  ordersEarningAccrued Order[] @relation("OrderCourierEarning")
+  walletTransfersOut WalletPeerTransfer[] @relation("WalletTransferFromCourier")
+  walletTransfersIn  WalletPeerTransfer[] @relation("WalletTransferToCourier")
+  webPushSubscriptions WebPushSubscription[]
+}
+
+model CourierWalletMiscEntry {
+  id          String                   @id @default(cuid())
+  courierId   String
+  courier     Courier                  @relation(fields: [courierId], references: [id], onDelete: Restrict)
+  direction   CourierWalletMiscDirection
+  amountDinar Decimal                  @db.Decimal(14, 4)
+  label       String
+  createdAt   DateTime                 @default(now())
+  deletedAt   DateTime?
+  deletedReason        OrderCourierMoneyDeletionReason?
+  deletedByDisplayName String?
+  @@index([courierId])
+  @@index([courierId, deletedAt])
+}
+
+model WalletPeerTransfer {
+  id               String                   @id @default(cuid())
+  status           WalletPeerTransferStatus @default(pending)
+  amountDinar      Decimal                  @db.Decimal(14, 4)
+  handoverLocation String
+  fromKind       WalletPeerPartyKind
+  fromCourierId  String?
+  fromCourier    Courier?  @relation("WalletTransferFromCourier", fields: [fromCourierId], references: [id], onDelete: Restrict)
+  fromEmployeeId String?
+  fromEmployee   Employee? @relation("WalletTransferFromEmployee", fields: [fromEmployeeId], references: [id], onDelete: Restrict)
+  toKind       WalletPeerPartyKind
+  toCourierId  String?
+  toCourier    Courier?  @relation("WalletTransferToCourier", fields: [toCourierId], references: [id], onDelete: Restrict)
+  toEmployeeId String?
+  toEmployee   Employee? @relation("WalletTransferToEmployee", fields: [toEmployeeId], references: [id], onDelete: Restrict)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  respondedAt DateTime?
+}
+
+model EmployeeWalletMiscEntry {
+  id          String                   @id @default(cuid())
+  employeeId  String
+  employee    Employee                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  direction   CourierWalletMiscDirection
+  amountDinar Decimal                  @db.Decimal(14, 4)
+  label       String
+  createdAt   DateTime                 @default(now())
+  deletedAt   DateTime?
+  deletedReason        OrderCourierMoneyDeletionReason?
+  deletedByDisplayName String?
+  @@index([employeeId])
+  @@index([employeeId, deletedAt])
+}
+
+model OrderCourierMoneyEvent {
+  id              String    @id @default(cuid())
+  orderId         String
+  order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courierId       String?
+  courier         Courier?  @relation(fields: [courierId], references: [id], onDelete: Restrict)
+  kind            String
+  amountDinar     Decimal   @db.Decimal(14, 4)
+  expectedDinar   Decimal?  @db.Decimal(14, 4)
+  matchesExpected Boolean   @default(true)
+  mismatchReason  String    @default("")
+  mismatchNote    String    @default("")
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+  deletedReason   OrderCourierMoneyDeletionReason?
+  deletedByDisplayName String?
+  recordedByCompanyPreparerId String?
+  recordedByCompanyPreparer   CompanyPreparer? @relation("OrderMoneyRecordedByCompanyPreparer", fields: [recordedByCompanyPreparerId], references: [id], onDelete: SetNull)
+  @@index([orderId])
+  @@index([courierId])
+}
+
+model Order {
+  id                    String    @id @default(cuid())
+  orderNumber           Int       @unique @default(autoincrement())
+  shopId                String
+  shop                  Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customerId            String?
+  customer              Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  summary               String    @default("")
+  status                String    @default("pending")
+  submittedByEmployeeId String?
+  submittedBy           Employee? @relation("OrderSubmittedByEmployee", fields: [submittedByEmployeeId], references: [id], onDelete: SetNull)
+  submittedByCompanyPreparerId String?
+  submittedByCompanyPreparer   CompanyPreparer? @relation("OrderSubmittedByPreparer", fields: [submittedByCompanyPreparerId], references: [id], onDelete: SetNull)
+  assignedCourierId     String?
+  courier               Courier?  @relation(fields: [assignedCourierId], references: [id], onDelete: SetNull)
+  courierEarningDinar       Decimal? @db.Decimal(14, 4)
+  courierEarningForCourierId String?
+  courierEarningForCourier    Courier? @relation("OrderCourierEarning", fields: [courierEarningForCourierId], references: [id], onDelete: SetNull)
+  moneyEvents               OrderCourierMoneyEvent[]
+  orderType        String    @default("")
+  customerLocationUrl String @default("")
+  customerLocationSetByCourierAt DateTime?
+  customerLocationUploadedByName String?
+  customerLandmark    String @default("")
+  customerRegionId String?
+  customerRegion   Region?   @relation("OrderCustomerRegion", fields: [customerRegionId], references: [id], onDelete: SetNull)
+  routeMode String @default("single")
+  adminOrderCode String @default("")
+  secondCustomerPhone String?
+  secondCustomerRegionId String?
+  secondCustomerRegion Region? @relation("OrderSecondDestinationRegion", fields: [secondCustomerRegionId], references: [id], onDelete: SetNull)
+  secondCustomerLocationUrl String @default("")
+  secondCustomerLandmark String @default("")
+  secondCustomerDoorPhotoUrl String?
+  secondCustomerDoorPhotoUploadedByName String?
+  deliveryPrice    Decimal?  @db.Decimal(10, 2)
+  orderSubtotal    Decimal?  @db.Decimal(10, 2)
+  totalAmount      Decimal?  @db.Decimal(10, 2)
+  customerPhone    String    @default("")
+  alternatePhone   String?
+  orderNoteTime    String?
+  imageUrl         String?
+  orderImageUploadedByName String?
+  shopDoorPhotoUrl String?
+  shopDoorPhotoUploadedByName String?
+  customerDoorPhotoUrl String?
+  customerDoorPhotoUploadedByName String?
+  voiceNoteUrl         String?
+  adminVoiceNoteUrl    String?
+  submissionSource String    @default("employee")
+  preparerShoppingJson Json?
+  prepaidAll Boolean @default(false)
+  shopCostPaidAt DateTime?
+  customerPaymentReceivedAt DateTime?
+  courierCashSettledAt DateTime?
+  archivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shopId])
+  @@index([assignedCourierId])
+  @@index([submittedByCompanyPreparerId])
+  @@index([status])
+  @@index([archivedAt])
+  @@index([customerRegionId])
+  @@index([secondCustomerRegionId])
+  @@index([routeMode])
+  @@index([customerId])
+}
+
+model MandoubWaButtonSetting {
+  id String @id @default(cuid())
+  name String @default("")
+  label String
+  iconKey String @default("💬")
+  templateText String
+  recipient String @default("customer")
+  statusesCsv String @default("")
+  customerLocationRule String @default("any")
+  visibilityScope String @default("all")
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([isActive])
+}
+
+model WebPushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  audience  String
+  courierId String?
+  courier   Courier? @relation(fields: [courierId], references: [id], onDelete: Cascade)
+  employeeId String?
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AppNotificationSettings {
+  id Int @id
+  adminEnabled          Boolean @default(true)
+  adminTemplateSingle   String  @default("طلب جديد بانتظار الموافقة (#{orderNumber})")
+  adminTemplateMultiple String  @default("وصلت {count} طلبات جديدة بانتظار الموافقة")
+  adminSoundEnabled     Boolean @default(true)
+  adminSoundPreset      String  @default("beep")
+  mandoubEnabled          Boolean @default(true)
+  mandoubTemplateSingle   String  @default("تم إسناد طلب جديد إليك (#{orderNumber})")
+  mandoubTemplateMultiple String  @default("تم إسناد {count} طلبات جديدة إليك")
+  mandoubSoundEnabled     Boolean @default(true)
+  mandoubSoundPreset      String  @default("beep")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TelegramBotSession {
+  id             String   @id @default(cuid())
+  telegramUserId String   @unique
+  chatId         String
+  step           String   @default("idle")
+  orderNumber    Int?
+  payload        String   @default("")
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+}
+
+model StoreCategory {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  imageUrl  String   @default("")
+  sortOrder Int      @default(0)
+  parentId  String?
+  parent    StoreCategory? @relation("StoreCategoryParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children  StoreCategory[] @relation("StoreCategoryParent")
+  products  StoreProduct[]
+  productLinks StoreProductCategory[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StoreBranch {
+  id        String   @id @default(cuid())
+  name      String
+  imageUrl  String   @default("")
+  shopId    String?  @unique
+  shop      Shop?    @relation("StoreBranchShop", fields: [shopId], references: [id], onDelete: SetNull)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  stockMovements StoreStockMovement[]
+}
+
+model StoreProduct {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String   @default("")
+  imageUrls   String   @default("")
+  active      Boolean  @default(true)
+  categoryId String?
+  category   StoreCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  categories StoreProductCategory[]
+  variants  StoreProductVariant[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StoreProductCategory {
+  productId  String
+  product    StoreProduct  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   StoreCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  @@id([productId, categoryId])
+}
+
+model StoreProductVariant {
+  id        String @id @default(cuid())
+  productId String
+  product   StoreProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku String @default("")
+  optionValues Json
+  salePriceDinar Decimal @db.Decimal(14, 4)
+  costPriceDinar Decimal @db.Decimal(14, 4)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  stockMovements StoreStockMovement[]
+  orderItems     StoreOrderItem[]
+}
+
+model StoreStockMovement {
+  id        String @id @default(cuid())
+  kind      StoreStockMovementKind
+  branchId  String
+  branch    StoreBranch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  variantId String
+  variant   StoreProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  quantity  Int
+  note      String @default("")
+  createdAt DateTime @default(now())
+}
+
+model StoreOrder {
+  id          String @id @default(cuid())
+  orderNumber Int    @unique @default(autoincrement())
+  status      StoreOrderStatus @default(pending)
+  customerName  String @default("")
+  customerPhone String
+  addressText   String @default("")
+  notes         String @default("")
+  subtotalSaleDinar Decimal @db.Decimal(14, 4)
+  totalSaleDinar    Decimal @db.Decimal(14, 4)
+  totalCostDinar    Decimal @db.Decimal(14, 4)
+  profitDinar       Decimal @db.Decimal(14, 4)
+  items     StoreOrderItem[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StoreOrderItem {
+  id       String @id @default(cuid())
+  orderId  String
+  order    StoreOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId String?
+  variant   StoreProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  productName   String
+  variantLabel  String @default("")
+  quantity      Int
+  unitSaleDinar Decimal @db.Decimal(14, 4)
+  unitCostDinar Decimal @db.Decimal(14, 4)
+  lineSaleDinar Decimal @db.Decimal(14, 4)
+  lineCostDinar Decimal @db.Decimal(14, 4)
+  lineProfitDinar Decimal @db.Decimal(14, 4)
+}
+
+enum CourierVehicleType {
+  car
+  bike
+}
+
+enum OrderCourierMoneyDeletionReason {
+  manual_admin
+  manual_courier
+  manual_preparer
+  status_revert
+}
+
+enum CourierWalletMiscDirection {
+  take
+  give
+}
+
+enum PreparerMonthlySalaryResetMode {
+  calendar_month
+  every_n_days
+  manual
+}
+
+enum PreparerShoppingDraftStatus {
+  draft
+  priced
+  sent
+  archived
+}
+
+enum WalletPeerTransferStatus {
+  pending
+  accepted
+  rejected
+}
+
+enum WalletPeerPartyKind {
+  courier
+  employee
+  admin
+}
+
+enum StoreStockMovementKind {
+  in
+  out
+  adjust
+}
+
+enum StoreOrderStatus {
+  pending
+  confirmed
+  cancelled
+}

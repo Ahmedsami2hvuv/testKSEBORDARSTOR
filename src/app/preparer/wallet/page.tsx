@@ -1,0 +1,230 @@
+import Link from "next/link";
+import { cookies } from "next/headers";
+import { Decimal } from "@prisma/client/runtime/library";
+import { verifyCompanyPreparerPortalQuery, type CompanyPreparerPortalVerifyReason } from "@/lib/company-preparer-portal-link";
+import { preparerPath } from "@/lib/preparer-portal-nav";
+import { prisma } from "@/lib/prisma";
+import { formatDinarAsAlfWithUnit } from "@/lib/money-alf";
+import { filterLedgerByRecentDays } from "@/lib/money-entry-ui";
+import {
+  LEDGER_KIND_TRANSFER_PENDING_IN,
+  LEDGER_KIND_TRANSFER_PENDING_OUT,
+  MISC_LEDGER_KIND_GIVE,
+  MISC_LEDGER_KIND_TAKE,
+  MONEY_KIND_DELIVERY,
+  MONEY_KIND_PICKUP,
+} from "@/lib/mandoub-money-events";
+import { getPreparerMoneyTotals } from "@/lib/preparer-combined-wallet-totals";
+import {
+  resolvePartyDisplayName,
+  sumPendingOutgoingForEmployee,
+  employeeWalletRemainFromMisc,
+} from "@/lib/wallet-peer-transfer";
+import type { MandoubWalletLedgerLine } from "@/app/mandoub/mandoub-wallet-client";
+import { PreparerWalletClient } from "@/app/client/order/preparer-wallet-client";
+import { PreparerWalletTransferSection } from "./preparer-wallet-transfer-section";
+
+export const dynamic = "force-dynamic";
+
+type Props = {
+  searchParams: Promise<{ p?: string; exp?: string; s?: string }>;
+};
+
+function invalidMessage(reason: CompanyPreparerPortalVerifyReason): string {
+  switch (reason) {
+    case "expired": return "انتهت صلاحية الرابط أو تم تسجيل الدخول من جهاز آخر.";
+    case "bad_signature":
+    case "missing": return "الرابط غير صالح. يرجى فتح الرابط الأصلي المرسل إليك.";
+    case "no_secret": return "إعداد الخادم غير مكتمل.";
+    default: return "تعذّر التحقق.";
+  }
+}
+
+export default async function PreparerWalletPage({ searchParams }: Props) {
+  const sp = await searchParams;
+  const cookieStore = await cookies();
+
+  // جلب الهوية من الرابط أو من الكوكيز (لحمايته من المسح عند مشاركة الرابط)
+  const p = sp.p || cookieStore.get("preparer_p")?.value;
+  const s = sp.s || cookieStore.get("preparer_s")?.value;
+  const exp = sp.exp || cookieStore.get("preparer_exp")?.value;
+
+  const v = verifyCompanyPreparerPortalQuery(p, exp, s);
+
+  if (!v.ok) {
+    return (
+      <div className="kse-app-bg min-h-screen px-4 py-16 text-slate-800">
+        <div className="kse-app-inner mx-auto max-w-md">
+          <div className="kse-glass-dark rounded-2xl border border-rose-300 p-8 text-center">
+            <p className="text-lg font-bold text-rose-700">تعذّر فتح المحفظة</p>
+            <p className="mt-2 text-sm text-slate-600">{invalidMessage(v.reason)}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const preparer = await prisma.companyPreparer.findFirst({
+    where: { id: v.preparerId, active: true },
+    include: {
+      walletEmployee: { include: { shop: true } },
+      shopLinks: { select: { shopId: true } },
+    },
+  });
+
+  if (!preparer || !preparer.walletEmployee) {
+    return (
+      <div className="kse-app-bg min-h-screen px-4 py-16 text-slate-800">
+        <div className="kse-app-inner mx-auto max-w-md">
+          <div className="kse-glass-dark rounded-2xl p-8 text-center">
+            <p className="text-lg font-bold text-slate-800">المحفظة غير مفعّلة لهذا الحساب</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const baseAuth = { p: p!, exp: exp || "", s: s! };
+  const employee = preparer.walletEmployee;
+  const shopIds = preparer.shopLinks.map((l) => l.shopId);
+  const walletPathWithQuery = preparerPath("/preparer/wallet", baseAuth);
+  const back = preparerPath("/preparer", baseAuth);
+
+  const [
+    miscRows,
+    pendingTransferRows,
+    transferTargetCouriers,
+    companyPreparers,
+    pendingOutgoingSum,
+    totals,
+    orderMoneyEvents,
+  ] = await Promise.all([
+    prisma.employeeWalletMiscEntry.findMany({ where: { employeeId: employee.id }, orderBy: { createdAt: "desc" } }),
+    prisma.walletPeerTransfer.findMany({
+      where: { status: "pending", OR: [{ fromEmployeeId: employee.id }, { toEmployeeId: employee.id }] },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.courier.findMany({ where: { blocked: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    // جلب المجهزين الآخرين فقط للتحويل
+    prisma.companyPreparer.findMany({
+      where: { active: true, walletEmployeeId: { not: null }, id: { not: v.preparerId } },
+      select: { id: true, name: true, phone: true, walletEmployeeId: true },
+      orderBy: { name: "asc" },
+    }),
+    sumPendingOutgoingForEmployee(employee.id),
+    getPreparerMoneyTotals(v.preparerId),
+    prisma.orderCourierMoneyEvent.findMany({
+      where: { order: { shopId: { in: shopIds } }, recordedByCompanyPreparerId: preparer.id },
+      include: {
+        courier: { select: { name: true } },
+        order: { select: { orderNumber: true, shop: { select: { name: true } }, customerRegion: { select: { name: true } } } }
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  const walletRemain = totals?.remain ?? new Decimal(0);
+  const availableForTransfer = walletRemain.minus(pendingOutgoingSum);
+
+  const transferTargetEmployees = companyPreparers.map(p => ({
+    id: p.walletEmployeeId!,
+    name: p.name,
+    shopName: "", // مجهز شركة لا يتبع لمحل في الواجهة
+    phone: p.phone,
+  }));
+
+  const orderLines: MandoubWalletLedgerLine[] = orderMoneyEvents.map((e) => ({
+    source: "order",
+    id: e.id,
+    kind: e.kind,
+    amountDinar: Number(e.amountDinar),
+    createdAt: e.createdAt.toISOString(),
+    orderId: e.orderId,
+    orderNumber: e.order.orderNumber,
+    shopName: e.order.shop.name,
+    regionName: e.order.customerRegion?.name,
+    deletedAt: e.deletedAt ? e.deletedAt.toISOString() : null,
+    deletedReason: e.deletedReason,
+    miscLabel: "",
+    deletedByDisplayName: e.deletedByDisplayName ?? null,
+  }));
+
+  const miscLines: MandoubWalletLedgerLine[] = miscRows.map((r) => ({
+    source: "misc",
+    id: r.id,
+    kind: r.direction === "take" ? MISC_LEDGER_KIND_TAKE : MISC_LEDGER_KIND_GIVE,
+    amountDinar: Number(r.amountDinar),
+    createdAt: r.createdAt.toISOString(),
+    orderId: "",
+    orderNumber: 0,
+    shopName: "",
+    miscLabel: r.label,
+    deletedAt: r.deletedAt ? r.deletedAt.toISOString() : null,
+    deletedReason: r.deletedReason,
+    deletedByDisplayName: r.deletedByDisplayName ?? null,
+  }));
+
+  const pendingIn = await Promise.all(pendingTransferRows.filter(t => t.toEmployeeId === employee.id).map(async t => ({
+    id: t.id, amountDinar: Number(t.amountDinar), fromLabel: await resolvePartyDisplayName(t.fromKind, t.fromCourierId, t.fromEmployeeId),
+    handoverLocation: t.handoverLocation, createdAt: t.createdAt.toISOString()
+  })));
+
+  const transferOutLines: MandoubWalletLedgerLine[] = await Promise.all(pendingTransferRows.filter(t => t.fromEmployeeId === employee.id).map(async t => ({
+    source: "transfer_pending",
+    id: t.id,
+    kind: LEDGER_KIND_TRANSFER_PENDING_OUT,
+    amountDinar: Number(t.amountDinar),
+    createdAt: t.createdAt.toISOString(),
+    orderId: "",
+    orderNumber: 0,
+    shopName: "",
+    miscLabel: `تحويل بانتظار الموافقة — ${t.handoverLocation}`,
+    deletedAt: null,
+    deletedReason: null,
+    deletedByDisplayName: null,
+  })));
+
+  const mergedLedger = filterLedgerByRecentDays([...orderLines, ...miscLines, ...transferOutLines].sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+
+  return (
+    <div className="kse-app-bg min-h-screen px-4 py-8 pb-24 text-slate-800">
+      <div className="kse-app-inner mx-auto max-w-lg space-y-5">
+        <header className="kse-glass-dark rounded-2xl border border-violet-200/90 p-5 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-violet-800">أبو الأكبر للتوصيل</p>
+          <h1 className="mt-2 text-xl font-black text-slate-900">محفظة المجهز</h1>
+          <p className="mt-1 text-sm font-semibold text-violet-900">{preparer.name}</p>
+          <nav className="mt-4 flex">
+            <Link href={back} className="inline-flex flex-1 items-center justify-center rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-800 hover:bg-slate-50 transition shadow-sm">
+              ← الطلبات
+            </Link>
+          </nav>
+        </header>
+
+        {/* ملخص المحفظة للمجهز */}
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          <div className="kse-glass-dark rounded-xl border border-slate-300 bg-white p-3 text-center shadow-sm">
+            <p className="text-xs font-bold text-slate-500">الوارد</p>
+            <p className="mt-1 text-base font-black text-slate-900">{formatDinarAsAlfWithUnit(totals?.ward ?? 0)}</p>
+          </div>
+          <div className="kse-glass-dark rounded-xl border border-slate-300 bg-white p-3 text-center shadow-sm">
+            <p className="text-xs font-bold text-slate-500">الصادر</p>
+            <p className="mt-1 text-base font-black text-slate-900">{formatDinarAsAlfWithUnit(totals?.sader ?? 0)}</p>
+          </div>
+          <div className="kse-glass-dark rounded-xl border border-slate-300 bg-white p-3 text-center shadow-sm">
+            <p className="text-xs font-bold text-slate-500">المتبقي</p>
+            <p className="mt-1 text-base font-black text-indigo-700">{formatDinarAsAlfWithUnit(totals?.remain ?? 0)}</p>
+          </div>
+        </div>
+
+        <PreparerWalletTransferSection
+          auth={baseAuth} walletPathWithQuery={walletPathWithQuery} selfEmployeeId={employee.id}
+          transferTargetCouriers={transferTargetCouriers} transferTargetEmployees={transferTargetEmployees}
+          pendingIncoming={pendingIn} availableForTransferStr={formatDinarAsAlfWithUnit(availableForTransfer)}
+          pendingOutgoingCount={transferOutLines.length}
+        />
+
+        <PreparerWalletClient hideWalletSummary ledger={mergedLedger} orderLinkAuth={baseAuth} preparerDeleteAuth={baseAuth} preparerDeleteNextUrl={walletPathWithQuery} />
+      </div>
+    </div>
+  );
+}
