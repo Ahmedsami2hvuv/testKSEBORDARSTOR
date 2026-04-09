@@ -1,3 +1,2 @@
--- AlterTable
-ALTER TABLE "Courier" ADD COLUMN "hiddenFromReports" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "Courier" ADD COLUMN "blocked" BOOLEAN NOT NULL DEFAULT false;
+-- This migration was moved to 20260324130000 to fix ordering issues.
+-- The Courier table is created in 20260324120000.
