@@ -71,7 +71,7 @@ export function AdminOrderPhotoQuick({
             el.click();
           }}
         >
-          كاميرا
+          {pending ? "جارٍ الرفع..." : "كاميرا"}
         </button>
         <button
           type="button"
@@ -84,7 +84,7 @@ export function AdminOrderPhotoQuick({
             el.click();
           }}
         >
-          معرض
+          {pending ? "جارٍ الرفع..." : "معرض"}
         </button>
         {hasImage && (
           <button

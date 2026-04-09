@@ -152,7 +152,6 @@ export function MandoubOrderMoneyFlow({
     totalAmountDinar != null &&
     Math.abs(deliverySum - totalAmountDinar) < AMOUNT_EPS;
 
-  /** أزرار دفع العميل واستلام الزبون - ثابتة */
   const showPickupBtn =
     canRecordMoney &&
     hasOrderSubtotal &&
@@ -163,7 +162,6 @@ export function MandoubOrderMoneyFlow({
 
   const showDeliveryBtn = canRecordMoney && hasTotalAmount && !deliveryComplete;
 
-  /** أزرار الحالة (تم الاستلام / تم التسليم) - ستكون عائمة */
   const canMarkPickedUp = canRecordMoney && orderStatus === "assigned" && hasOrderSubtotal;
   const canMarkDelivered = canRecordMoney && orderStatus === "delivering" && hasTotalAmount;
 
@@ -178,7 +176,6 @@ export function MandoubOrderMoneyFlow({
     <div className="mt-6 space-y-4 border-t border-sky-200 pt-5">
       <h3 className="text-lg font-bold text-slate-900">الصادر والوارد</h3>
 
-      {/* الأزرار الثابتة (دفع واستلام مبالغ فقط) */}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {showPickupBtn ? (
           <button
@@ -210,25 +207,21 @@ export function MandoubOrderMoneyFlow({
         ) : null}
       </div>
 
-      {/* الأزرار العائمة للحالة يتم التحكم بها عبر هذا المكون */}
       <MandoubOrderMoneyFloatDock
         showStatusFab={canMarkPickedUp || canMarkDelivered}
         statusFabMode={canMarkPickedUp ? "pickedUp" : "delivered"}
         onStatusFabClick={() => {
           if (orderStatus === "assigned") {
             setPickupAdvanceToDelivering(true);
-            setDeliveryAdvanceToDelivered(false);
-            setPickupOpen(true);
             setDeliveryOpen(false);
+            setPickupOpen(true);
             return;
           }
           setDeliveryAdvanceToDelivered(true);
-          setPickupAdvanceToDelivering(false);
           setDeliverySession((n) => n + 1);
-          setDeliveryOpen(true);
           setPickupOpen(false);
+          setDeliveryOpen(true);
         }}
-        // تم إخفاء أزرار المبالغ من الـ FloatDock لأنها أصبحت ثابتة في الأعلى
         showPickupBtn={false}
         showDeliveryBtn={false}
         pickupOpen={pickupOpen && pickupAdvanceToDelivering}
@@ -282,7 +275,6 @@ export function MandoubOrderMoneyFlow({
         }
       />
 
-      {/* لوحة إدخال المبالغ تظهر هنا عند النقر على الأزرار الثابتة */}
       {(pickupOpen && !pickupAdvanceToDelivering) || (deliveryOpen && !deliveryAdvanceToDelivered) ? (
         <div className="rounded-2xl border-2 border-slate-300 bg-slate-50 p-4 shadow-inner">
           <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-2">
@@ -338,6 +330,10 @@ export function MandoubOrderMoneyFlow({
           const noteLine = noteParts.length > 0 ? noteParts.join(" — ") : "—";
           const recordedByPreparer = ev.recordedByCompanyPreparerId != null;
           const canDeleteFromMandoubUi = !recordedByPreparer;
+
+          // حساب الاختلاف للعرض تحت زر الحذف
+          const diff = ev.expectedDinar != null ? ev.amountDinar - ev.expectedDinar : 0;
+          const hasMismatch = ev.expectedDinar != null && Math.abs(diff) > 0.01;
 
           return (
             <li
@@ -413,38 +409,57 @@ export function MandoubOrderMoneyFlow({
                     </p>
                   ) : null}
                 </div>
-                {!deleted && canDeleteFromMandoubUi ? (
-                  <form
-                    action={deleteAction}
-                    className="shrink-0 self-start"
-                    onSubmit={(e) => {
-                      if (
-                        !window.confirm(
-                          `تأكيد حذف حركة «${dirLabel}» لهذا الطلب #${orderNumber}؟`,
-                        )
-                      ) {
-                        e.preventDefault();
-                      }
-                    }}
-                  >
-                    <input type="hidden" name="c" value={auth.c} />
-                    <input type="hidden" name="exp" value={auth.exp} />
-                    <input type="hidden" name="s" value={auth.s} />
-                    <input type="hidden" name="eventId" value={ev.id} />
-                    <input type="hidden" name="next" value={nextUrl} />
-                    <button
-                      type="submit"
-                      disabled={deletePending}
-                      className="min-h-[52px] min-w-[3.8rem] rounded-xl border-2 border-rose-400 bg-white py-3 text-base font-black text-rose-900 shadow-sm transition hover:bg-rose-50 disabled:opacity-60"
+                <div className="flex shrink-0 flex-col items-center gap-2 self-start">
+                  {!deleted && canDeleteFromMandoubUi ? (
+                    <form
+                      action={deleteAction}
+                      onSubmit={(e) => {
+                        if (
+                          !window.confirm(
+                            `تأكيد حذف حركة «${dirLabel}» لهذا الطلب #${orderNumber}؟`,
+                          )
+                        ) {
+                          e.preventDefault();
+                        }
+                      }}
                     >
-                      🗑️
-                    </button>
-                  </form>
-                ) : !deleted ? (
-                  <p className="max-w-[9rem] shrink-0 self-start text-center text-[11px] font-bold leading-snug text-slate-500">
-                    حذف من لوحة المجهز فقط
-                  </p>
-                ) : null}
+                      <input type="hidden" name="c" value={auth.c} />
+                      <input type="hidden" name="exp" value={auth.exp} />
+                      <input type="hidden" name="s" value={auth.s} />
+                      <input type="hidden" name="eventId" value={ev.id} />
+                      <input type="hidden" name="next" value={nextUrl} />
+                      <button
+                        type="submit"
+                        disabled={deletePending}
+                        className="min-h-[52px] min-w-[3.8rem] rounded-xl border-2 border-rose-400 bg-white py-3 text-base font-black text-rose-900 shadow-sm transition hover:bg-rose-50 disabled:opacity-60"
+                      >
+                        🗑️
+                      </button>
+                    </form>
+                  ) : !deleted ? (
+                    <p className="max-w-[9rem] text-center text-[11px] font-bold leading-snug text-slate-500">
+                      حذف من لوحة المجهز فقط
+                    </p>
+                  ) : null}
+
+                  {/* علامة الحالة (مطابق / زيادة / نقص) */}
+                  {!deleted && ev.expectedDinar != null && (
+                    <div className={`flex w-full flex-col items-center justify-center rounded-lg border px-1.5 py-1 text-[10px] font-black shadow-inner ${
+                      !hasMismatch
+                        ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                        : diff > 0
+                          ? "border-amber-400 bg-amber-50 text-amber-700"
+                          : "border-rose-400 bg-rose-50 text-rose-700"
+                    }`}>
+                      <span>{!hasMismatch ? "✅ مطابق" : diff > 0 ? "⚠️ زيادة" : "🚨 نقص"}</span>
+                      {hasMismatch && (
+                        <span className="mt-0.5 tabular-nums">
+                          ({diff > 0 ? "+" : ""}{formatDinarAsAlfWithUnit(Math.abs(diff))})
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </li>
           );
@@ -489,33 +504,18 @@ function PickupMoneyForm({
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
-  const [statusNote, setStatusNote] = useState("");
   const amountRef = useRef<HTMLInputElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
-  const statusNoteRef = useRef<HTMLTextAreaElement>(null);
   const pickupSubmitModeRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const mainSubmitRef = useRef<HTMLButtonElement>(null);
-  const statusFormRef = useRef<HTMLFormElement>(null);
-  const statusSubmitRef = useRef<HTMLButtonElement>(null);
 
-  const pickupMatchesExpected =
+  const parsedDinar = parseAlfInputToDinarDecimalRequired(amount);
+  const projectedTotal = pickupSumDinar + (parsedDinar.ok ? parsedDinar.value : 0);
+  const isMismatch =
     orderSubtotalDinar != null &&
-    Math.abs(pickupSumDinar - orderSubtotalDinar) < 1e-3;
-
-  const statusOnlyFull =
-    advanceToDelivering &&
-    pickupRemainingDinar != null &&
-    pickupRemainingDinar <= 0 &&
-    pickupSumDinar > 0;
-
-  const statusOnlyPartial =
-    advanceToDelivering &&
-    pickupRemainingDinar != null &&
-    pickupRemainingDinar > 0 &&
-    pickupSumDinar > 0;
-
-  const statusOnlyConfirm = statusOnlyFull || statusOnlyPartial;
+    !dinarTotalsMatchClient(projectedTotal, orderSubtotalDinar) &&
+    (amount.trim() !== "" || (advanceToDelivering && pickupSumDinar > 0));
 
   function requestPickupMainSubmit() {
     if (pickupSubmitModeRef.current) pickupSubmitModeRef.current.value = "";
@@ -548,138 +548,17 @@ function PickupMoneyForm({
     requestPickupMainSubmit();
   }
 
-  function onStatusNoteKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
-    e.preventDefault();
-    statusFormRef.current?.requestSubmit(statusSubmitRef.current ?? undefined);
-  }
-
   useEffect(() => {
-    if (!statusOnlyConfirm) amountRef.current?.focus();
-  }, [statusOnlyConfirm]);
+    amountRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     const err = (error ?? "").trim();
     if (!err) return;
     if (err.includes("ملاحظة") || err.includes("المبلغ مختلف")) {
       noteRef.current?.focus();
-      statusNoteRef.current?.focus();
     }
   }, [error]);
-
-  if (statusOnlyPartial) {
-    return (
-      <div className="space-y-3">
-        <p className="font-bold text-amber-950">تأكيد الاستلام بحالة الصادر الحالي</p>
-        <p className="text-sm leading-relaxed text-amber-950/95">
-          المبلغ مختلف — اكتب السبب. يمكنك تحويل الطلب إلى «عند المندوب» إذا اتفقت مع المحل.
-        </p>
-        <form ref={statusFormRef} action={formAction} className="space-y-3">
-          <input type="hidden" name="c" value={auth.c} />
-          <input type="hidden" name="exp" value={auth.exp} />
-          <input type="hidden" name="s" value={auth.s} />
-          <input type="hidden" name="orderId" value={orderId} />
-          <input type="hidden" name="next" value={nextUrl} />
-          <input type="hidden" name="advanceStatus" value="delivering" />
-          <input type="hidden" name="statusAdvanceOnly" value="1" />
-          <input type="hidden" name="amountAlf" value="" />
-          <input type="hidden" name="mismatchReason" value="" />
-          <textarea
-            ref={statusNoteRef}
-            name="mismatchNote"
-            value={statusNote}
-            onChange={(e) => setStatusNote(e.target.value)}
-            onKeyDown={onStatusNoteKeyDown}
-            rows={3}
-            required
-            className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
-            placeholder="المبلغ مختلف — اكتب السبب"
-          />
-          {error ? <p className="text-sm font-bold text-rose-700">{error}</p> : null}
-          <div className="flex flex-wrap gap-2">
-            <button
-              ref={statusSubmitRef}
-              type="submit"
-              disabled={pending}
-              className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
-            >
-              {pending ? "جارٍ التحديث…" : "تأكيد تحويل الحالة"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-800"
-            >
-              إلغاء
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
-
-  if (statusOnlyFull) {
-    const needStatusNote = !pickupMatchesExpected;
-    return (
-      <div className="space-y-3">
-        <p className="font-bold text-amber-950">تأكيد تحويل الطلب إلى عند المندوب</p>
-        <p className="text-sm leading-relaxed text-amber-950/95">
-          مجموع الصادر وصل أو تجاوز سعر الطلب المرجعي في النظام. اضغط للتأكيد ليظهر الطلب باللون{" "}
-          <strong className="font-black">الأصفر</strong> في قائمتك.
-          {needStatusNote ? (
-            <>
-              {" "}
-              المبلغ مختلف — اكتب <strong className="font-black">ملاحظة</strong> توضّح السبب.
-            </>
-          ) : null}
-        </p>
-        <form ref={statusFormRef} action={formAction} className="space-y-3">
-          <input type="hidden" name="c" value={auth.c} />
-          <input type="hidden" name="exp" value={auth.exp} />
-          <input type="hidden" name="s" value={auth.s} />
-          <input type="hidden" name="orderId" value={orderId} />
-          <input type="hidden" name="next" value={nextUrl} />
-          <input type="hidden" name="advanceStatus" value="delivering" />
-          <input type="hidden" name="statusAdvanceOnly" value="1" />
-          <input type="hidden" name="amountAlf" value="" />
-          <input type="hidden" name="mismatchReason" value="" />
-          {needStatusNote ? (
-            <textarea
-              ref={statusNoteRef}
-              name="mismatchNote"
-              value={statusNote}
-              onChange={(e) => setStatusNote(e.target.value)}
-              onKeyDown={onStatusNoteKeyDown}
-              rows={3}
-              required
-              className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
-              placeholder="المبلغ مختلف — اكتب السبب"
-            />
-          ) : (
-            <input type="hidden" name="mismatchNote" value="" />
-          )}
-          {error ? <p className="text-sm font-bold text-rose-700">{error}</p> : null}
-          <div className="flex flex-wrap gap-2">
-            <button
-              ref={statusSubmitRef}
-              type="submit"
-              disabled={pending}
-              className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
-            >
-              {pending ? "جارٍ التحديث…" : "تأكيد تحويل الحالة"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-800"
-            >
-              إلغاء
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-3">
@@ -733,16 +612,19 @@ function PickupMoneyForm({
           required
         />
         <input type="hidden" name="mismatchReason" value="" />
-        <textarea
-          ref={noteRef}
-          name="mismatchNote"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          onKeyDown={onPickupNoteKeyDown}
-          rows={2}
-          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-          placeholder="المبلغ مختلف — اكتب السبب"
-        />
+        {isMismatch && (
+          <textarea
+            ref={noteRef}
+            name="mismatchNote"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={onPickupNoteKeyDown}
+            rows={2}
+            required
+            className="w-full rounded-xl border-2 border-amber-400 bg-amber-50 px-3 py-2 text-sm shadow-sm transition-all"
+            placeholder="المبلغ مختلف — اكتب السبب"
+          />
+        )}
         {error ? <p className="text-sm font-bold text-rose-700">{error}</p> : null}
         <div className="flex flex-wrap gap-2">
           <button
@@ -819,10 +701,8 @@ function DeliveryMoneyForm({
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
-  const [statusNote, setStatusNote] = useState("");
   const amountRef = useRef<HTMLInputElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
-  const statusNoteRef = useRef<HTMLTextAreaElement>(null);
   const [locationModalOpen, setLocationModalOpen] = useState(false);
   const [geoError, setGeoError] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
@@ -833,26 +713,13 @@ function DeliveryMoneyForm({
   const deliverySubmitModeRef = useRef<HTMLInputElement>(null);
   const pendingAfterLocationRef = useRef<"main" | "skip">("main");
   const mainSubmitRef = useRef<HTMLButtonElement>(null);
-  const statusFormRef = useRef<HTMLFormElement>(null);
-  const statusSubmitRef = useRef<HTMLButtonElement>(null);
 
-  const deliveryMatchesExpected =
+  const parsedDinar = parseAlfInputToDinarDecimalRequired(amount);
+  const projectedTotal = deliverySumDinar + (parsedDinar.ok ? parsedDinar.value : 0);
+  const isMismatch =
     totalAmountDinar != null &&
-    Math.abs(deliverySumDinar - totalAmountDinar) < 1e-3;
-
-  const statusOnlyPartial =
-    advanceToDelivered &&
-    deliveryRemainingDinar != null &&
-    deliveryRemainingDinar > 0 &&
-    deliverySumDinar > 0;
-
-  const statusOnlyFull =
-    advanceToDelivered &&
-    deliveryRemainingDinar != null &&
-    deliveryRemainingDinar <= 0 &&
-    deliverySumDinar > 0;
-
-  const statusOnlyConfirm = statusOnlyFull || statusOnlyPartial;
+    !dinarTotalsMatchClient(projectedTotal, totalAmountDinar) &&
+    (amount.trim() !== "" || (advanceToDelivered && deliverySumDinar > 0));
 
   function requestDeliveryMainSubmit() {
     if (deliverySubmitModeRef.current) deliverySubmitModeRef.current.value = "";
@@ -885,26 +752,16 @@ function DeliveryMoneyForm({
     requestDeliveryMainSubmit();
   }
 
-  function onDeliveryStatusNoteKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
-    e.preventDefault();
-    statusFormRef.current?.requestSubmit(statusSubmitRef.current ?? undefined);
-  }
-
   useEffect(() => {
     setPortalReady(true);
+    amountRef.current?.focus();
   }, []);
-
-  useEffect(() => {
-    if (!statusOnlyConfirm) amountRef.current?.focus();
-  }, [statusOnlyConfirm]);
 
   useEffect(() => {
     const err = (error ?? "").trim();
     if (!err) return;
     if (err.includes("ملاحظة") || err.includes("المبلغ مختلف")) {
       noteRef.current?.focus();
-      statusNoteRef.current?.focus();
     }
   }, [error]);
 
@@ -953,130 +810,12 @@ function DeliveryMoneyForm({
   }
 
   function onSkipLocation() {
-    clearGpsHidden();
+    // إصلاح الخطأ: تفريغ الإحداثيات تماماً عند رفض رفع الموقع
+    if (latRef.current) latRef.current.value = "";
+    if (lngRef.current) lngRef.current.value = "";
     locationPromptDoneRef.current = true;
     setLocationModalOpen(false);
     submitDeliveryAfterLocationChoice();
-  }
-
-  if (statusOnlyPartial) {
-    return (
-      <div className="space-y-3">
-        <p className="font-bold text-red-950">تأكيد التسليم بحالة الوارد الحالي</p>
-        <p className="text-sm leading-relaxed text-red-950/95">
-          المبلغ مختلف — اكتب السبب. يمكنك إنهاء التسليم إذا اتفقت مع المحل.
-        </p>
-        <form ref={statusFormRef} action={formAction} className="space-y-3">
-          <input type="hidden" name="c" value={auth.c} />
-          <input type="hidden" name="exp" value={auth.exp} />
-          <input type="hidden" name="s" value={auth.s} />
-          <input type="hidden" name="orderId" value={orderId} />
-          <input type="hidden" name="next" value={nextUrl} />
-          <input type="hidden" name="advanceStatus" value="delivered" />
-          <input type="hidden" name="statusAdvanceOnly" value="1" />
-          <input type="hidden" name="amountAlf" value="" />
-          <input type="hidden" name="mismatchReason" value="" />
-          <input type="hidden" name="lat" value="" />
-          <input type="hidden" name="lng" value="" />
-          <textarea
-            ref={statusNoteRef}
-            name="mismatchNote"
-            value={statusNote}
-            onChange={(e) => setStatusNote(e.target.value)}
-            onKeyDown={onDeliveryStatusNoteKeyDown}
-            rows={3}
-            required
-            className="w-full rounded-xl border border-red-300 bg-white px-3 py-2 text-sm"
-            placeholder="المبلغ مختلف — اكتب السبب"
-          />
-          {error ? <p className="text-sm font-bold text-rose-700">{error}</p> : null}
-          <div className="flex flex-wrap gap-2">
-            <button
-              ref={statusSubmitRef}
-              type="submit"
-              disabled={pending}
-              className="rounded-xl bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
-            >
-              {pending ? "جارٍ التحديث…" : "تأكيد تحويل الحالة"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-800"
-              disabled={pending}
-            >
-              إلغاء
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
-
-  if (statusOnlyFull) {
-    const needStatusNote = !deliveryMatchesExpected;
-    return (
-      <div className="space-y-3">
-        <p className="font-bold text-red-950">تأكيد تحويل الطلب إلى تم التسليم</p>
-        <p className="text-sm leading-relaxed text-red-950/95">
-          مجموع الوارد وصل أو تجاوز المبلغ الكلي المرجعي. اضغط للتأكيد ليظهر الطلب باللون{" "}
-          <strong className="font-black">الأخضر</strong> في قائمتك.
-          {needStatusNote ? (
-            <>
-              {" "}
-              المبلغ مختلف — اكتب <strong className="font-black">ملاحظة</strong> توضّح السبب.
-            </>
-          ) : null}
-        </p>
-        <form ref={statusFormRef} action={formAction} className="space-y-3">
-          <input type="hidden" name="c" value={auth.c} />
-          <input type="hidden" name="exp" value={auth.exp} />
-          <input type="hidden" name="s" value={auth.s} />
-          <input type="hidden" name="orderId" value={orderId} />
-          <input type="hidden" name="next" value={nextUrl} />
-          <input type="hidden" name="advanceStatus" value="delivered" />
-          <input type="hidden" name="statusAdvanceOnly" value="1" />
-          <input type="hidden" name="amountAlf" value="" />
-          <input type="hidden" name="mismatchReason" value="" />
-          <input type="hidden" name="lat" value="" />
-          <input type="hidden" name="lng" value="" />
-          {needStatusNote ? (
-            <textarea
-              ref={statusNoteRef}
-              name="mismatchNote"
-              value={statusNote}
-              onChange={(e) => setStatusNote(e.target.value)}
-              onKeyDown={onDeliveryStatusNoteKeyDown}
-              rows={3}
-              required
-              className="w-full rounded-xl border border-red-300 bg-white px-3 py-2 text-sm"
-              placeholder="المبلغ مختلف — اكتب السبب"
-            />
-          ) : (
-            <input type="hidden" name="mismatchNote" value="" />
-          )}
-          {error ? <p className="text-sm font-bold text-rose-700">{error}</p> : null}
-          <div className="flex flex-wrap gap-2">
-            <button
-              ref={statusSubmitRef}
-              type="submit"
-              disabled={pending}
-              className="rounded-xl bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
-            >
-              {pending ? "جارٍ التحديث…" : "تأكيد تحويل الحالة"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-800"
-              disabled={pending}
-            >
-              إلغاء
-            </button>
-          </div>
-        </form>
-      </div>
-    );
   }
 
   return (
@@ -1128,8 +867,8 @@ function DeliveryMoneyForm({
           name="advanceStatus"
           value={advanceToDelivered ? "delivered" : ""}
         />
-        <input ref={latRef} type="hidden" name="lat" defaultValue="" />
-        <input ref={lngRef} type="hidden" name="lng" defaultValue="" />
+        <input ref={latRef} type="hidden" name="lat" value="" />
+        <input ref={lngRef} type="hidden" name="lng" value="" />
         <input
           ref={amountRef}
           name="amountAlf"
@@ -1143,16 +882,19 @@ function DeliveryMoneyForm({
           required
         />
         <input type="hidden" name="mismatchReason" value="" />
-        <textarea
-          ref={noteRef}
-          name="mismatchNote"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          onKeyDown={onDeliveryNoteKeyDown}
-          rows={2}
-          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-          placeholder="المبلغ مختلف — اكتب السبب"
-        />
+        {isMismatch && (
+          <textarea
+            ref={noteRef}
+            name="mismatchNote"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={onDeliveryNoteKeyDown}
+            rows={2}
+            required
+            className="w-full rounded-xl border-2 border-amber-400 bg-amber-50 px-3 py-2 text-sm shadow-sm transition-all"
+            placeholder="المبلغ مختلف — اكتب السبب"
+          />
+        )}
         {error ? <p className="text-sm font-bold text-rose-700">{error}</p> : null}
         <div className="flex flex-wrap gap-2">
           <button
@@ -1179,7 +921,7 @@ function DeliveryMoneyForm({
                 }
               }}
               className="rounded-xl border-2 border-red-400 bg-red-50 px-4 py-2 text-sm font-black text-red-950 shadow-sm transition hover:bg-red-100 disabled:opacity-60"
-              title="تحويل الحالة إلى «تم التسليم» دون تسجيل مبلغ وارد في هذه الخطوة"
+              title="تحويل الحالة إلى «تم التسليم» دون تسجيل مبلغ وارد في هذه خطوة"
             >
               بدون
             </button>

@@ -12,6 +12,221 @@ import { pushNotifyCourierNewAssignment } from "@/lib/web-push-server";
 import { revalidatePath } from "next/cache";
 
 export type AssignOrderState = { error?: string; ok?: boolean };
+export type RejectOrderState = { error?: string; ok?: boolean };
+
+/** إسناد طلب لواحد أو أكثر من المجهزين مع دمج ومزامنة المنتجات */
+export async function assignOrderToPreparer(
+  _prev: AssignOrderState,
+  formData: FormData,
+): Promise<AssignOrderState> {
+  const orderId = String(formData.get("orderId") ?? "").trim();
+  const isDraft = formData.get("isDraft") === "true";
+
+  const preparerIds = formData.getAll("preparerIds").length > 0
+    ? formData.getAll("preparerIds").map(id => String(id).trim())
+    : [String(formData.get("preparerId") ?? "").trim()].filter(Boolean);
+
+  if (!orderId || preparerIds.length === 0) {
+    return { error: "يجب اختيار مجهز واحد على الأقل" };
+  }
+
+  let customerPhone = "";
+  let titleLine = "";
+  let summary = "";
+  let customerRegionId: string | null = null;
+  let customerLandmark = "";
+  let orderNoteTime = "";
+  let sentOrderId: string | null = null;
+  let existingGroupId: string | null = null;
+  let mergedProducts: any[] = [];
+
+  if (isDraft) {
+    const draft = await prisma.companyPreparerShoppingDraft.findUnique({
+      where: { id: orderId },
+    });
+    if (!draft) return { error: "المسودة غير موجودة" };
+
+    customerPhone = draft.customerPhone;
+    titleLine = draft.titleLine;
+    summary = draft.rawListText;
+    customerRegionId = draft.customerRegionId;
+    customerLandmark = draft.customerLandmark;
+    orderNoteTime = draft.orderTime;
+    sentOrderId = draft.sentOrderId;
+    existingGroupId = (draft.data as any)?.groupId || null;
+
+    // جلب كافة المسودات المرتبطة لدمج المنتجات لضمان عدم ضياع أي بيانات للمجهز الجديد
+    const allRelated = await prisma.companyPreparerShoppingDraft.findMany({
+        where: {
+            status: { in: ["draft", "priced"] },
+            customerPhone,
+            titleLine
+        },
+        include: { preparer: true }
+    });
+
+    allRelated.forEach(r => {
+        const rData = (r.data as any) || {};
+        const rProducts = rData.products || [];
+        rProducts.forEach((p: any) => {
+            const ext = mergedProducts.find(m => m.line === p.line);
+            const isPriced = p.buyAlf && p.buyAlf !== "0";
+            if (ext) {
+                if ((!ext.buyAlf || ext.buyAlf === "0") && isPriced) {
+                    ext.buyAlf = p.buyAlf; ext.sellAlf = p.sellAlf; ext.pricedBy = r.preparer.name;
+                }
+            } else {
+                mergedProducts.push({...p, pricedBy: isPriced ? r.preparer.name : null});
+            }
+        });
+    });
+  } else {
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) return { error: "الطلب غير موجود" };
+
+    customerPhone = order.customerPhone;
+    titleLine = `طلب #${order.orderNumber} - ${order.orderType}`;
+    summary = order.summary;
+    customerRegionId = order.customerRegionId;
+    customerLandmark = order.customerLandmark;
+    orderNoteTime = order.orderNoteTime || "فوري";
+    sentOrderId = order.id;
+    mergedProducts = (order.preparerShoppingJson as any)?.products || [];
+  }
+
+  // إذا كانت القائمة فارغة، قم بتحليل النص الخام
+  if (mergedProducts.length === 0) {
+      const lines = summary.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 1);
+      mergedProducts = lines.map(line => ({ line, buyAlf: null, sellAlf: null }));
+  }
+
+  const finalGroupId = existingGroupId || `GRP-${Date.now()}`;
+
+  for (const preparerId of preparerIds) {
+    const existing = await prisma.companyPreparerShoppingDraft.findFirst({
+      where: {
+        preparerId,
+        status: { in: ["draft", "priced"] },
+        customerPhone,
+        titleLine
+      }
+    });
+
+    if (existing) {
+        // تحديث المسودة الموجودة بالمجموعة الجديدة والمنتجات المدمجة بدلاً من إنشاء واحدة ثانية
+        await prisma.companyPreparerShoppingDraft.update({
+            where: { id: existing.id },
+            data: { data: { ...(existing.data as any || {}), groupId: finalGroupId, products: mergedProducts } }
+        });
+        continue;
+    }
+
+    await prisma.companyPreparerShoppingDraft.create({
+      data: {
+        preparerId,
+        titleLine,
+        rawListText: summary,
+        customerPhone,
+        customerName: customerPhone,
+        customerRegionId,
+        customerLandmark,
+        orderTime: orderNoteTime,
+        sentOrderId,
+        data: {
+           version: 1,
+           groupId: finalGroupId,
+           products: mergedProducts,
+           fromAdminAction: true
+        }
+      }
+    });
+
+    await prisma.companyPreparerPrepNotice.create({
+      data: {
+        preparerId,
+        title: "إسناد طلب تجهيز",
+        body: `تم إسناد طلب جديد إليك (${customerPhone}).`,
+      },
+    });
+  }
+
+  revalidatePath("/admin/orders/pending");
+  revalidatePath(`/admin/orders/${orderId}`);
+  return { ok: true };
+}
+
+/** إعادة إسناد (تغيير) المجهز */
+export async function reassignOrderToPreparer(
+  _prev: AssignOrderState,
+  formData: FormData,
+): Promise<AssignOrderState> {
+  const id = String(formData.get("id") ?? "").trim();
+  const preparerIds = formData.getAll("preparerIds").length > 0
+    ? formData.getAll("preparerIds").map(id => String(id).trim())
+    : [String(formData.get("preparerId") ?? "").trim()].filter(Boolean);
+  const isDraft = formData.get("isDraft") === "true";
+
+  if (!id || preparerIds.length === 0) return { error: "يجب اختيار مجهز واحد على الأقل" };
+
+  const preparerId = preparerIds[0];
+
+  if (isDraft) {
+    const draft = await prisma.companyPreparerShoppingDraft.findUnique({ where: { id } });
+    if (!draft) return { error: "المسودة غير موجودة" };
+    await prisma.companyPreparerShoppingDraft.update({
+      where: { id },
+      data: { preparerId }
+    });
+  } else {
+    const order = await prisma.order.findUnique({ where: { id } });
+    if (!order) return { error: "الطلب غير موجود" };
+    await prisma.order.update({
+      where: { id },
+      data: { submittedByCompanyPreparerId: preparerId }
+    });
+  }
+
+  revalidatePath("/admin/orders/pending");
+  revalidatePath(`/admin/orders/${id}`);
+  return { ok: true };
+}
+
+/** حذف طلب أو مسودة بالكامل */
+export async function deleteOrderPermanently(
+  _prev: any,
+  formData: FormData,
+): Promise<any> {
+  const id = String(formData.get("id") ?? "").trim();
+  const isDraft = formData.get("isDraft") === "true";
+
+  if (!id) return { error: "المعرف مفقود" };
+
+  try {
+    if (isDraft) {
+      const draft = await prisma.companyPreparerShoppingDraft.findUnique({ where: { id } });
+      if (draft) {
+          const draftData = (draft.data as any) || {};
+          const groupId = draftData.groupId;
+
+          if (groupId) {
+             await prisma.companyPreparerShoppingDraft.deleteMany({
+                 where: { data: { path: ["groupId"], equals: groupId } }
+             });
+          } else {
+             await prisma.companyPreparerShoppingDraft.delete({ where: { id } });
+          }
+      }
+    } else {
+      await prisma.companyPreparerShoppingDraft.deleteMany({ where: { sentOrderId: id } });
+      await prisma.order.delete({ where: { id } });
+    }
+  } catch (e) {
+    return { error: "فشل الحذف، قد يكون الطلب مرتبطاً بسجلات أخرى" };
+  }
+
+  revalidatePath("/admin/orders/pending");
+  return { ok: true };
+}
 
 export async function assignPendingOrderToCourier(
   _prev: AssignOrderState,
@@ -21,108 +236,38 @@ export async function assignPendingOrderToCourier(
   const courierId = String(formData.get("courierId") ?? "").trim();
   const customerLocationUrl = String(formData.get("customerLocationUrl") ?? "").trim();
   const customerLandmark = String(formData.get("customerLandmark") ?? "").trim();
-  const doorFile = formData.get("customerDoorPhoto");
 
-  if (!orderId) {
-    return { error: "معرّف الطلب مفقود" };
-  }
-  if (!courierId) {
-    return { error: "اختر المندوب ثم اضغط الموافقة" };
-  }
-  const order = await prisma.order.findFirst({
-    where: { id: orderId, status: "pending" },
-  });
-  if (!order) {
-    return { error: "الطلب غير متاح أو تم إسناده مسبقاً" };
-  }
-  const courier = await prisma.courier.findUnique({
-    where: { id: courierId },
-  });
-  if (!courier) {
-    return { error: "المندوب غير موجود — أضف مندوباً من قسم المندوبين." };
-  }
-  if (courier.blocked) {
-    return { error: "المندوب محظور ولا يمكن إسناد طلبات له." };
-  }
-  if (courier.hiddenFromReports) {
-    return { error: "المندوب مخفي عن الإسناد ولا يمكن إسناد طلبات له." };
-  }
-
-  let doorUrl: string | null = order.customerDoorPhotoUrl;
-  let doorPhotoJustUploaded = false;
-  if (doorFile instanceof File && doorFile.size > 0) {
-    try {
-      doorUrl = await saveCustomerDoorPhotoUploaded(doorFile, MAX_ORDER_IMAGE_BYTES);
-      doorPhotoJustUploaded = true;
-    } catch (e) {
-      const code = e instanceof Error ? e.message : "";
-      if (code === "IMAGE_TOO_LARGE") {
-        return { error: "صورة باب الزبون كبيرة (الحد 10 ميجابايت). جرّب تصغير الصورة أو إرسال الطلب دون صورة." };
-      }
-      if (code === "IMAGE_BAD_TYPE") {
-        return { error: "نوع الصورة غير مدعوم (JPG أو PNG أو Webp فقط)" };
-      }
-      if (code === "IMAGE_STORAGE_FAILED") {
-        return {
-          error:
-            "تعذّر حفظ الصورة على الخادم (الصورة كبيرة أو التخزين غير متاح). جرّب صورة أصغر أو أرسل دون صورة.",
-        };
-      }
-      return { error: "تعذّر حفظ صورة باب الزبون. حاول مرة أخرى." };
-    }
-  }
-
-  const locMerged = customerLocationUrl.trim() || order.customerLocationUrl;
-  const lmMerged = customerLandmark.trim() || order.customerLandmark;
+  if (!orderId || !courierId) return { error: "بيانات ناقصة" };
 
   await prisma.order.update({
     where: { id: orderId },
     data: {
       assignedCourierId: courierId,
       status: "assigned",
-      customerLocationUrl: locMerged,
-      customerLandmark: lmMerged,
-      ...(doorUrl != null ? { customerDoorPhotoUrl: doorUrl } : {}),
-      ...(doorPhotoJustUploaded
-        ? { customerDoorPhotoUploadedByName: ORDER_UPLOADER_ADMIN_LABEL }
-        : {}),
+      customerLocationUrl,
+      customerLandmark,
     },
   });
 
-  await syncPhoneProfileFromOrder(orderId);
-  void pushNotifyCourierNewAssignment(courierId, order.orderNumber);
-
   revalidatePath("/admin/orders/pending");
-  revalidatePath("/admin/couriers");
-  revalidatePath("/admin/orders/tracking");
-  revalidatePath("/mandoub");
   revalidatePath(`/admin/orders/${orderId}`);
   return { ok: true };
 }
-
-export type RejectOrderState = { error?: string; ok?: boolean };
 
 export async function rejectPendingOrder(
   _prev: RejectOrderState,
   formData: FormData,
 ): Promise<RejectOrderState> {
   const orderId = String(formData.get("orderId") ?? "").trim();
-  if (!orderId) {
-    return { error: "معرّف الطلب مفقود" };
+  if (!orderId) return { error: "المعرف مفقود" };
+  try {
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { status: "cancelled" },
+    });
+    revalidatePath("/admin/orders/pending");
+    return { ok: true };
+  } catch (e) {
+    return { error: "فشل تحديث حالة الطلب" };
   }
-  const order = await prisma.order.findFirst({
-    where: { id: orderId, status: "pending" },
-  });
-  if (!order) {
-    return { error: "الطلب غير متاح أو تمت معالجته" };
-  }
-  await prisma.order.update({
-    where: { id: orderId },
-    data: { status: "cancelled" },
-  });
-  revalidatePath("/admin/orders/pending");
-  revalidatePath("/admin/orders/tracking");
-  revalidatePath("/admin/orders/rejected");
-  revalidatePath(`/admin/orders/${orderId}`);
-  return { ok: true };
 }

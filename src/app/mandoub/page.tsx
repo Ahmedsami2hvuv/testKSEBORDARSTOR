@@ -2,15 +2,20 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { formatDinarAsAlf } from "@/lib/money-alf";
 import { prisma } from "@/lib/prisma";
+import { Decimal } from "@prisma/client/runtime/library";
 import type { DelegatePortalVerifyReason } from "@/lib/delegate-link";
 import { verifyDelegatePortalQuery } from "@/lib/delegate-link";
 import {
-  deliveredSaderMismatch,
-  deliveredWardMismatch,
+  isSaderMismatch,
+  isWardMismatch,
   sumDeliveryInFromOrderMoneyEvents,
+  sumPickupOutFromOrderMoneyEvents,
 } from "@/lib/mandoub-money";
 import { isManualDeletionReason } from "@/lib/mandoub-money-events";
-import { fetchMandoubMoneySumsForCourier } from "@/lib/mandoub-courier-event-totals";
+import {
+  fetchMandoubMoneySumsForCourier,
+  fetchOrderOnlyMoneySumsForCourier,
+} from "@/lib/mandoub-courier-event-totals";
 import { computeMandoubTotalsForCourier } from "@/lib/mandoub-courier-totals";
 import { mandoubOrderDetailInclude } from "@/lib/mandoub-order-queries";
 import { hasCustomerLocationUrl } from "@/lib/order-location";
@@ -23,6 +28,7 @@ import type { MandoubOrderSearchFields } from "@/lib/mandoub-order-smart-filter"
 import { MandoubMoneySummarySection } from "./mandoub-money-summary-section";
 import { MandoubOrdersSection } from "./mandoub-orders-client";
 import { MandoubPresenceToggle } from "./mandoub-presence-toggle";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import { MandoubAssignmentPoller } from "./mandoub-assignment-poller";
 import { MandoubWebPushBanner } from "./mandoub-web-push-banner";
 import type { MandoubRow } from "./mandoub-order-table";
@@ -67,6 +73,7 @@ type TabKey =
   | "delivered"
   | "checkSader"
   | "checkWard"
+  | "check"
   | "all";
 
 type Props = {
@@ -111,6 +118,8 @@ export default async function MandoubPage({ searchParams }: Props) {
 
   const wardFilter: "lower" | "higher" =
     sp.wardFilter === "higher" ? "higher" : "lower";
+  const saderFilter: "lower" | "higher" =
+    sp.saderFilter === "higher" ? "higher" : "lower";
 
   const tabRaw = sp.tab ?? "all";
   const tab: TabKey =
@@ -119,6 +128,7 @@ export default async function MandoubPage({ searchParams }: Props) {
     tabRaw === "delivered" ||
     tabRaw === "checkSader" ||
     tabRaw === "checkWard" ||
+    tabRaw === "check" ||
     tabRaw === "all"
       ? tabRaw
       : "all";
@@ -167,7 +177,9 @@ export default async function MandoubPage({ searchParams }: Props) {
     });
 
   const totalsBaseline = courier.mandoubTotalsResetAt;
-  const moneySums = await fetchMandoubMoneySumsForCourier(courier.id, totalsBaseline);
+
+  // جلب مبالغ الطلبات فقط لضمان عدم تأثر "المتبقي" الرئيسي بالتحويلات
+  const orderOnlySums = await fetchOrderOnlyMoneySumsForCourier(courier.id, totalsBaseline);
 
   const activeOrdersNorm = activeOrders.map((o) => ({
     ...o,
@@ -177,20 +189,27 @@ export default async function MandoubPage({ searchParams }: Props) {
     })),
   }));
   const orderMetrics = computeMandoubTotalsForCourier(activeOrdersNorm, courier.id, totalsBaseline);
-  const { sumDeliveryIn, sumPickupOut } = moneySums;
+
+  // هنا نستخدم مبالغ الطلبات فقط في الواجهة الرئيسية
+  const { sumDeliveryIn, sumPickupOut, remainingNet } = orderOnlySums;
 
   const filteredByTab = activeOrders.filter((o) => {
-    const deliveryInSum = sumDeliveryInFromOrderMoneyEvents(o.moneyEvents);
     if (!isMandoubActiveListStatus(o.status)) return false;
     if (tab === "all") return true;
-    if (tab === "checkSader") {
-      return deliveredSaderMismatch(o.status, o.totalAmount, o.orderSubtotal, o.deliveryPrice, deliveryInSum);
+
+    if (tab === "check" || tab === "checkSader") {
+      const mismatch = isSaderMismatch(o.status, o.orderSubtotal, sumPickupOutFromOrderMoneyEvents(o.moneyEvents));
+      if (tab === "check") return mismatch.hasMismatch || isWardMismatch(o.status, o.totalAmount, sumDeliveryInFromOrderMoneyEvents(o.moneyEvents)).hasMismatch;
+      if (!mismatch.hasMismatch) return false;
+      return saderFilter === "higher" ? mismatch.type === "excess" : mismatch.type === "deficit";
     }
+
     if (tab === "checkWard") {
-      return wardFilter === "higher"
-        ? deliveredSaderMismatch(o.status, o.totalAmount, o.orderSubtotal, o.deliveryPrice, deliveryInSum)
-        : deliveredWardMismatch(o.status, o.totalAmount, o.orderSubtotal, o.deliveryPrice, deliveryInSum);
+      const mismatch = isWardMismatch(o.status, o.totalAmount, sumDeliveryInFromOrderMoneyEvents(o.moneyEvents));
+      if (!mismatch.hasMismatch) return false;
+      return wardFilter === "higher" ? mismatch.type === "excess" : mismatch.type === "deficit";
     }
+
     return o.status === tab;
   });
 
@@ -213,6 +232,9 @@ export default async function MandoubPage({ searchParams }: Props) {
     hasCustomerLocation: hasCustomerLocationUrl(o.customerLocationUrl, o.customer?.customerLocationUrl),
     hasCourierUploadedLocation: Boolean(o.customerLocationSetByCourierAt),
     hasMoneyDeletedBadge: o.moneyEvents.some((e) => e.deletedAt && isManualDeletionReason(e.deletedReason)),
+    wardMismatchType: isWardMismatch(o.status, o.totalAmount, sumDeliveryInFromOrderMoneyEvents(o.moneyEvents)).type,
+    saderMismatchType: isSaderMismatch(o.status, o.orderSubtotal, sumPickupOutFromOrderMoneyEvents(o.moneyEvents)).type,
+    createdAt: o.createdAt,
   }));
 
   const searchFields: MandoubOrderSearchFields[] = filteredByTab.map((o) => ({
@@ -250,13 +272,17 @@ export default async function MandoubPage({ searchParams }: Props) {
       active ? "bg-sky-600 text-white shadow-md ring-2 ring-sky-300" : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
     }`;
 
+  const isChecking = tab === "check" || tab === "checkSader" || tab === "checkWard";
+
   return (
     <div dir="rtl" lang="ar" className="kse-app-bg min-h-screen text-base leading-relaxed text-slate-800">
       <div className="kse-app-inner mx-auto max-w-6xl px-2 py-2 pb-24 sm:px-4 sm:py-4 sm:text-lg">
         <header className="kse-glass-dark mb-3 flex items-center gap-2 border border-sky-200/90 px-3 py-2.5 shadow-sm">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-black text-slate-900 sm:text-lg">أهلاً {courier.name}</p>
+            <p className="truncate text-base font-black text-slate-900 sm:text-lg dark:text-[#00f3ff]">أهلاً {courier.name}</p>
+            <p className="text-[10px] font-bold text-slate-500 sm:text-xs">{courier.phone}</p>
           </div>
+          <ThemeSwitcher />
           <MandoubPresenceToggle auth={baseAuth} availableForAssignment={courier.availableForAssignment} />
           <Link href={`/mandoub/wallet?${baseQuery.toString()}`} className="inline-flex shrink-0 items-center justify-center rounded-xl border-2 border-violet-500 bg-violet-600 px-3 py-2 text-center text-sm font-black text-white shadow-sm hover:bg-violet-700 sm:px-4 sm:text-base">المحفظة</Link>
         </header>
@@ -268,11 +294,12 @@ export default async function MandoubPage({ searchParams }: Props) {
           totalsBaseline={totalsBaseline}
           sumDeliveryInDinar={Number(sumDeliveryIn)}
           sumPickupOutDinar={Number(sumPickupOut)}
-          remainingNetDinar={Number(moneySums.remainingNet)}
+          remainingNetDinar={Number(remainingNet)}
           sumEarningsDinar={Number(orderMetrics.sumEarnings)}
           courierVehicleType={courier.vehicleType}
           hrefWalletLedger={(l) => `/mandoub/wallet?${baseQuery.toString()}${l !== 'all' ? '&ledger=' + l : ''}`}
           hideTitle hideResetText
+          showAdminBox={false}
         />
 
         <div className="mb-4 flex flex-col gap-3">
@@ -281,16 +308,27 @@ export default async function MandoubPage({ searchParams }: Props) {
             <Link href={`/mandoub?tab=assigned&${baseQuery.toString()}`} className={tabBtnClass(tab === "assigned")}>لم يتم الاستلام</Link>
             <Link href={`/mandoub?tab=delivering&${baseQuery.toString()}`} className={tabBtnClass(tab === "delivering")}>تم الاستلام</Link>
             <Link href={`/mandoub?tab=delivered&${baseQuery.toString()}`} className={tabBtnClass(tab === "delivered")}>تم التسليم</Link>
+            <Link href={`/mandoub?tab=check&${baseQuery.toString()}`} className={tabBtnClass(isChecking)}>الفحص 🔍</Link>
           </nav>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Link href={`/mandoub?tab=checkSader&${baseQuery.toString()}`} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${tab === "checkSader" ? "bg-emerald-600 text-white ring-2 ring-emerald-300" : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"}`}>فحص الصادر</Link>
-            <Link href={`/mandoub?tab=checkWard&${baseQuery.toString()}`} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${tab === "checkWard" ? "bg-rose-600 text-white ring-2 ring-rose-300" : "bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100"}`}>فحص الوارد</Link>
-          </div>
+          {isChecking && (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white/60 p-2 border border-sky-100 shadow-sm animate-in fade-in slide-in-from-top-1">
+              <Link href={`/mandoub?tab=checkSader&${baseQuery.toString()}`} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${tab === "checkSader" ? "bg-emerald-600 text-white ring-2 ring-emerald-300" : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"}`}>فحص الصادر</Link>
+              <Link href={`/mandoub?tab=checkWard&${baseQuery.toString()}`} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${tab === "checkWard" ? "bg-rose-600 text-white ring-2 ring-rose-300" : "bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100"}`}>فحص الوارد</Link>
+            </div>
+          )}
         </div>
 
+        {tab === "checkSader" && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl bg-white/50 p-2 border border-emerald-100 animate-in fade-in slide-in-from-right-2">
+            <span className="text-xs font-bold text-slate-500 ms-1">فلترة الصادر:</span>
+            <Link href={`/mandoub?tab=checkSader&saderFilter=lower&${baseQuery.toString()}`} className={`rounded-lg px-2.5 py-1 text-xs font-bold ${saderFilter === 'lower' ? 'bg-emerald-600 text-white' : 'bg-white text-emerald-700 border border-emerald-200'}`}>أقل من المتوقع</Link>
+            <Link href={`/mandoub?tab=checkSader&saderFilter=higher&${baseQuery.toString()}`} className={`rounded-lg px-2.5 py-1 text-xs font-bold ${saderFilter === 'higher' ? 'bg-emerald-600 text-white' : 'bg-white text-emerald-700 border border-emerald-200'}`}>أكبر من المتوقع</Link>
+          </div>
+        )}
+
         {tab === "checkWard" && (
-          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl bg-white/50 p-2 border border-rose-100">
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl bg-white/50 p-2 border border-rose-100 animate-in fade-in slide-in-from-right-2">
             <span className="text-xs font-bold text-slate-500 ms-1">فلترة الوارد:</span>
             <Link href={`/mandoub?tab=checkWard&wardFilter=lower&${baseQuery.toString()}`} className={`rounded-lg px-2.5 py-1 text-xs font-bold ${wardFilter === 'lower' ? 'bg-rose-600 text-white' : 'bg-white text-rose-700 border border-rose-200'}`}>أقل من المتوقع</Link>
             <Link href={`/mandoub?tab=checkWard&wardFilter=higher&${baseQuery.toString()}`} className={`rounded-lg px-2.5 py-1 text-xs font-bold ${wardFilter === 'higher' ? 'bg-rose-600 text-white' : 'bg-white text-rose-700 border border-rose-200'}`}>أكبر من المتوقع</Link>

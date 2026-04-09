@@ -14,26 +14,35 @@ import { buildCustomerInvoiceText } from "@/lib/preparation-invoice";
 import { calculateExtraAlfFromPlacesCount } from "@/lib/preparation-extra";
 import type { PreparerShoppingPayloadV1 } from "@/lib/preparer-shopping-payload";
 import { normalizeRegionNameForMatch } from "@/lib/region-name-normalize";
+import { calculateAutoSellPrice } from "@/lib/auto-pricing";
 
-/** سطر واحد = شراء وبيع بنفس السعر؛ سطران = شراء ثم بيع. أي أسطر زائدة تُتجاهل عند الحفظ. */
-function parseTwoLinePricing(raw: string): { buy: string; sell: string } | null {
+/** سطر واحد = شراء فقط (الموقع يحسب البيع)؛ سطران = شراء ثم بيع يدوي. */
+function parseTwoLinePricing(line: string, raw: string): { buy: string; sell: string } | null {
   const lines = raw.split(/\r?\n/).map((l) => l.replace(/,/g, ".").trim());
   const nonEmpty = lines.filter((l) => l.length > 0);
   if (nonEmpty.length === 0) return null;
-  if (nonEmpty.length === 1) return { buy: nonEmpty[0]!, sell: nonEmpty[0]! };
+
+  const buyNum = parseFloat(nonEmpty[0]!);
+  if (!Number.isFinite(buyNum)) return null;
+
+  if (nonEmpty.length === 1) {
+    // تسعير تلقائي
+    const sellAuto = calculateAutoSellPrice(line, buyNum);
+    return { buy: nonEmpty[0]!, sell: sellAuto.toString() };
+  }
+
   return { buy: nonEmpty[0]!, sell: nonEmpty[1]! };
 }
 
-/** هل يوجد سعران صالحان في أول سطرين (اكتمال التسعير — لا حاجة لسطر ثالث). */
-function hasTwoCompletePriceLines(text: string): boolean {
+/** هل يوجد سعر صالح في السطر الأول (على الأقل). */
+function hasCompletePriceLines(text: string): boolean {
   const nonEmpty = text
     .split(/\r?\n/)
     .map((l) => l.replace(/,/g, ".").trim())
     .filter((l) => l.length > 0);
-  if (nonEmpty.length < 2) return false;
+  if (nonEmpty.length < 1) return false;
   const bn = parseFloat(nonEmpty[0]!);
-  const sn = parseFloat(nonEmpty[1]!);
-  return Number.isFinite(bn) && Number.isFinite(sn) && bn >= 0 && sn >= 0;
+  return Number.isFinite(bn) && bn >= 0;
 }
 
 const inputClass =
@@ -94,6 +103,7 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
   const [pricingLinesText, setPricingLinesText] = useState("");
   const [pricingErr, setPricingErr] = useState<string | null>(null);
   const [showAddProduct, setShowAddProduct] = useState(false);
+  const [bulkAddText, setBulkAddText] = useState("");
   const [deleteMode, setDeleteMode] = useState(false);
   /** idle → بعد التحليل؛ need_pick → يجب اختيار المنطقة قبل عرض المنتجات؛ ready → يمكن التسعير */
   const [regionGate, setRegionGate] = useState<"idle" | "need_pick" | "ready">("idle");
@@ -217,6 +227,8 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
       .filter(Boolean);
     if (lines.length === 0) return;
     setProducts((p) => [...p, ...lines]);
+    setShowAddProduct(false);
+    setBulkAddText("");
   }
 
   function removeProduct(i: number) {
@@ -243,16 +255,13 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
   function handleProductButton(i: number) {
     if (deleteMode) {
       removeProduct(i);
-      setDeleteMode(false);
       return;
     }
     setShowAddProduct(false);
     setPricingErr(null);
     const row = priceRows[i];
-    if (row?.buy?.trim() && row?.sell?.trim()) {
-      const b = row.buy.trim().replace(/,/g, ".");
-      const s = row.sell.trim().replace(/,/g, ".");
-      setPricingLinesText(b === s ? b : `${b}\n${s}`);
+    if (row?.buy?.trim()) {
+      setPricingLinesText(row.buy.trim());
     } else {
       setPricingLinesText("");
     }
@@ -262,9 +271,10 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
   function applyPricingPanel() {
     setPricingErr(null);
     if (selectedPriceIndex === null) return;
-    const parsed = parseTwoLinePricing(pricingLinesText);
+    const line = products[selectedPriceIndex]!;
+    const parsed = parseTwoLinePricing(line, pricingLinesText);
     if (!parsed) {
-      setPricingErr("اكتب رقماً في السطر الأول، أو سطرين: شراء ثم سعر للزبون.");
+      setPricingErr("اكتب سعر الشراء (بالألف).");
       return;
     }
     const bn = parseFloat(parsed.buy.replace(/,/g, "."));
@@ -274,11 +284,9 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
       return;
     }
     const i = selectedPriceIndex;
-    const buy = parsed.buy.replace(/,/g, ".").trim();
-    const sell = parsed.sell.replace(/,/g, ".").trim();
     setPriceRows((rows) => {
       const next = [...rows];
-      next[i] = { buy, sell };
+      next[i] = { buy: parsed.buy, sell: parsed.sell };
       return next;
     });
     setSelectedPriceIndex(null);
@@ -298,33 +306,16 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
   const allPriced = useMemo(() => {
     if (products.length === 0) return false;
     for (let i = 0; i < products.length; i++) {
-      const row = priceRows[i];
-      if (!row) return false;
-      const b = row.buy.replace(/,/g, ".").trim();
-      const s = row.sell.replace(/,/g, ".").trim();
-      if (!b || !s) return false;
-      const bn = parseFloat(b);
-      const sn = parseFloat(s);
-      if (!Number.isFinite(bn) || !Number.isFinite(sn) || bn < 0 || sn < 0) return false;
+      if (!isRowPriced(i)) return false;
     }
     return true;
   }, [products, priceRows]);
 
-  /** المنتجات المسعّرة تُعرض أولاً (كما في بوت تيليجرام). */
+  /** المنتجات المسعّرة تُعرض أولاً. */
   const sortedProductIndices = useMemo(() => {
-    const priced = (i: number) => {
-      const row = priceRows[i];
-      if (!row) return false;
-      const b = row.buy.replace(/,/g, ".").trim();
-      const s = row.sell.replace(/,/g, ".").trim();
-      if (!b || !s) return false;
-      const bn = parseFloat(b);
-      const sn = parseFloat(s);
-      return Number.isFinite(bn) && Number.isFinite(sn) && bn >= 0 && sn >= 0;
-    };
     return products.map((_, i) => i).sort((a, b) => {
-      const pa = priced(a) ? 1 : 0;
-      const pb = priced(b) ? 1 : 0;
+      const pa = isRowPriced(a) ? 1 : 0;
+      const pb = isRowPriced(b) ? 1 : 0;
       if (pa !== pb) return pb - pa;
       return a - b;
     });
@@ -407,10 +398,6 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
       <section className="kse-glass-dark rounded-2xl border border-violet-200/90 p-4 shadow-sm">
         <p className="text-xs font-semibold text-amber-900">المجهز: {preparerName.trim() || "—"}</p>
         <h2 className="text-base font-black text-violet-950">1) الصق قائمة الواتساب (أو الموقع)</h2>
-        <p className="mt-1 text-xs leading-relaxed text-slate-600">
-          يتعرّف النظام على <strong>عنوان المنطقة</strong>، <strong>رقم الهاتف</strong>، و<strong>سطر لكل منتج</strong> — بأي ترتيب.
-          بعد التحليل تظهر بطاقة الطلب ثم تسعّر كل منتج باختياره من القائمة (مثل بوت تيليجرام)، ثم عدد المحلات ثم الإرسال.
-        </p>
         <textarea
           value={pasteText}
           onChange={(e) => setPasteText(e.target.value)}
@@ -436,9 +423,6 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
       {products.length > 0 && regionGate === "need_pick" && !selected ? (
         <section className="kse-glass-dark rounded-2xl border border-amber-200/90 p-4 shadow-sm">
           <h2 className="text-sm font-black text-amber-950">اختر منطقة الزبون أولاً</h2>
-          <p className="mt-1 text-xs text-slate-600">
-            لم تُحدَّد المنطقة تلقائياً من عنوان القائمة. ابحث واختر من المناطق المقترحة — بعدها تظهر المنتجات والتسعير.
-          </p>
           <label className="mt-3 flex flex-col gap-1">
             <span className="text-xs font-medium text-slate-800">بحث عن المنطقة *</span>
             <input
@@ -493,7 +477,7 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
                 <span className="font-bold text-slate-900">{titleLine.trim() || "—"}</span>
               </p>
               <p className="mt-1">
-                <span className="text-slate-600">(عدد الـ 🛍️ :</span>{" "}
+                <span className="text-slate-600">(عدد المنتجات:</span>{" "}
                 <span className="font-black text-slate-900">{products.length}</span>
                 <span className="text-slate-600">)</span>
               </p>
@@ -510,8 +494,8 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
 
           <section className="kse-glass-dark rounded-2xl border border-sky-200 p-4 shadow-sm">
             <h2 className="text-sm font-black text-sky-950">2) تسعير الطلب</h2>
-            <p className="mt-2 text-sm font-bold leading-snug text-slate-900">
-              📝 تسعير الطلب ({titleLine.trim() || "—"}): اختر منتجاً لتعديل سعره
+            <p className="mt-2 text-sm font-bold leading-snug text-slate-900 text-center">
+              📝 اختر منتجاً لكتابة سعر الشراء
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
@@ -523,7 +507,7 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
                 }}
                 className="min-h-[44px] flex-1 rounded-2xl border-2 border-emerald-300 bg-emerald-50 px-3 py-2.5 text-sm font-black text-emerald-950 shadow-sm transition hover:bg-emerald-100"
               >
-                ➕ إضافة منتج
+                ➕ إضافة قائمة منتجات
               </button>
               <button
                 type="button"
@@ -534,7 +518,7 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
                 }}
                 className={`min-h-[44px] flex-1 rounded-2xl border-2 px-3 py-2.5 text-sm font-black shadow-sm transition ${
                   deleteMode
-                    ? "border-rose-600 bg-rose-600 text-white"
+                    ? "border-rose-600 bg-rose-600 text-white animate-pulse"
                     : "border-rose-300 bg-rose-50 text-rose-900 hover:bg-rose-100"
                 }`}
               >
@@ -542,22 +526,21 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
               </button>
             </div>
             {deleteMode ? (
-              <p className="mt-2 text-xs font-bold text-rose-700">اضغط على المنتج المراد حذفه.</p>
+              <p className="mt-2 text-xs font-bold text-rose-700 text-center">اضغط على المنتج المراد حذفه.</p>
             ) : null}
             {showAddProduct ? (
               <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
-                <label className="text-xs font-semibold text-emerald-900">سطر لكل منتج — ثم انقر خارج المربع للإضافة</label>
+                <label className="text-xs font-semibold text-emerald-900">الصق رسالة المنتجات — ثم انقر خارج المربع للإضافة</label>
                 <textarea
-                  rows={3}
+                  rows={4}
+                  value={bulkAddText}
+                  onChange={(e) => setBulkAddText(e.target.value)}
                   dir="rtl"
-                  placeholder="منتج جديد…"
+                  placeholder="طماطة 2 كيلو&#10;خبز 2&#10;خيار"
                   className={`${inputClass} mt-1 font-mono text-sm`}
                   onBlur={(e) => {
                     const v = e.target.value.trim();
-                    if (v) {
-                      addProductsFromTextarea(v);
-                      e.target.value = "";
-                    }
+                    if (v) addProductsFromTextarea(v);
                   }}
                 />
               </div>
@@ -578,17 +561,24 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
                         ? "border-sky-600 bg-sky-50 ring-2 ring-sky-200"
                         : deleteMode
                           ? "border-rose-400 bg-rose-50/80"
-                          : "border-slate-200 bg-white hover:border-sky-300 hover:bg-sky-50/40"
+                          : priced
+                            ? "border-emerald-800 bg-emerald-900 text-white shadow-md"
+                            : "border-slate-200 bg-white hover:border-sky-300 hover:bg-sky-50/40"
                     }`}
                   >
-                    <span className="min-w-0 flex-1 text-sm font-bold leading-snug text-slate-900">
+                    <span className={`min-w-0 flex-1 text-sm font-bold leading-snug ${priced ? "text-emerald-50" : "text-slate-900"}`}>
                       {priced ? "✅ " : ""}
                       {line}
                     </span>
                     {priced && sellShow ? (
-                      <span className="shrink-0 font-mono text-sm font-black tabular-nums text-slate-700" dir="ltr">
-                        {sellShow}
-                      </span>
+                      <div className="flex flex-col items-end">
+                        <span className="font-mono text-[10px] font-bold text-emerald-300" dir="ltr">
+                          شراء: {priceRows[i]?.buy}
+                        </span>
+                        <span className="font-mono text-sm font-black tabular-nums text-white" dir="ltr">
+                          بيع: {sellShow}
+                        </span>
+                      </div>
                     ) : (
                       <span className="shrink-0 text-xs font-semibold text-slate-400">⋯</span>
                     )}
@@ -599,16 +589,13 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
 
             {selectedPriceIndex != null ? (
               <div className="mt-4 rounded-2xl border-2 border-violet-300 bg-violet-50/50 p-4 shadow-inner">
-                <p className="text-sm font-bold text-slate-900">
-                  تمام، بكم اشتريت &ldquo;{products[selectedPriceIndex]}&rdquo;؟{" "}
-                  <span className="font-normal text-slate-600">(السطر الأول)</span>
+                <p className="text-sm font-bold text-slate-900 text-center">
+                  بكم اشتريت &ldquo;{products[selectedPriceIndex]}&rdquo;؟
                 </p>
-                <p className="mt-2 text-sm font-bold text-slate-900">
-                  وبكم للزبون؟ <span className="font-normal text-slate-600">(السطر الثاني)</span>
-                </p>
-                <p className="mt-2 text-xs leading-relaxed text-amber-900">
-                  💡 سطر أول = شراء، سطر ثانٍ = للزبون. إن كانا متساويين: سطر واحد فقط ثم «حفظ». Enter ينتقل للسطر
-                  الثاني؛ إذا اكتمل السعران فلن يُضاف سطر ثالث — يمكنك الضغط Enter لحفظ التسعير مباشرة.
+                <p className="mt-2 text-xs leading-relaxed text-amber-900 text-center">
+                  💡 اكتب سعر الشراء فقط وسيتم حساب سعر البيع تلقائياً.
+                  <br/>
+                  للتسعير اليدوي: اكتب الشراء في السطر الأول والبيع في الثاني.
                 </p>
                 <textarea
                   value={pricingLinesText}
@@ -617,44 +604,40 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
                     e.stopPropagation();
                     if (e.nativeEvent.isComposing) return;
                     if (e.key !== "Enter") return;
-                    if (hasTwoCompletePriceLines(pricingLinesText)) {
+                    if (hasCompletePriceLines(pricingLinesText)) {
                       e.preventDefault();
                       applyPricingPanel();
                     }
                   }}
-                  rows={4}
+                  rows={2}
                   dir="ltr"
-                  placeholder={"سطر 1: شراء\nسطر 2: للزبون"}
-                  className={`${inputClass} mt-2 font-mono text-base tabular-nums leading-relaxed whitespace-pre-wrap`}
-                  inputMode="text"
+                  placeholder={"سعر الشراء (بالألف)"}
+                  className={`${inputClass} mt-2 font-mono text-base tabular-nums leading-relaxed text-center`}
+                  inputMode="decimal"
                   autoFocus
                 />
                 {pricingErr ? (
-                  <p className="mt-2 text-xs font-bold text-rose-700" role="alert">
+                  <p className="mt-2 text-xs font-bold text-rose-700 text-center" role="alert">
                     {pricingErr}
                   </p>
                 ) : null}
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                <div className="mt-3 flex flex-col gap-2">
                   <button
                     type="button"
                     onClick={applyPricingPanel}
-                    className="min-h-[44px] flex-1 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-black text-white shadow-sm hover:bg-violet-700"
+                    className="min-h-[44px] w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-black text-white shadow-sm hover:bg-violet-700"
                   >
-                    حفظ
+                    حفظ السعر
                   </button>
                   <button
                     type="button"
                     onClick={cancelPricingPanel}
-                    className="min-h-[44px] flex-1 rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 hover:bg-slate-50"
+                    className="min-h-[44px] w-full rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 hover:bg-slate-50"
                   >
-                    ❌ إلغاء واختيار غير منتج
+                    إلغاء
                   </button>
                 </div>
               </div>
-            ) : null}
-
-            {!allPriced ? (
-              <p className="mt-3 text-xs font-semibold text-amber-800">اختر كل منتج وحدّد سعر الشراء والسعر للزبون.</p>
             ) : null}
           </section>
         </>
@@ -663,9 +646,6 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
       {showMainFlow && allPriced ? (
         <section className="kse-glass-dark rounded-2xl border border-indigo-200/90 p-4 shadow-sm">
           <h2 className="text-sm font-black text-indigo-950">3) كم محلاً تسوقت لهذه الطلبية؟</h2>
-          <p className="mt-1 text-xs text-slate-600">
-            تكلفة التجهيز: محلان أو أقل 0، 3 محلات = 1 ألف، 4 = 2… (كما في البوت).
-          </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {Array.from({ length: 10 }, (_, k) => k + 1).map((n) => (
               <button
@@ -683,9 +663,8 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
             ))}
           </div>
           {placesCount != null ? (
-            <p className="mt-2 text-xs text-slate-700">
-              إضافة تجهيز:{" "}
-              <strong className="tabular-nums">{calculateExtraAlfFromPlacesCount(placesCount)} ألف</strong>
+            <p className="mt-2 text-xs text-slate-700 font-bold">
+              إضافة تجهيز: <span className="tabular-nums">{calculateExtraAlfFromPlacesCount(placesCount)} ألف</span>
             </p>
           ) : null}
         </section>
@@ -694,13 +673,6 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
       {showMainFlow && allPriced && placesCount != null ? (
         <section className="kse-glass-dark rounded-2xl border border-sky-200 p-4 shadow-sm">
           <h2 className="text-sm font-black text-sky-950">4) المحل والزبون</h2>
-          <p className="mt-1 text-xs text-slate-600">
-            المنطقة مُعرَّفة من عنوان القائمة: <strong className="text-slate-900">{selected?.name ?? "—"}</strong>
-          </p>
-          <input type="hidden" name="p" value={auth.p} form="prep-form" />
-          <input type="hidden" name="exp" value={auth.exp} form="prep-form" />
-          <input type="hidden" name="s" value={auth.s} form="prep-form" />
-
           <label className="mt-3 flex flex-col gap-1">
             <span className="text-xs font-medium text-slate-800">المحل *</span>
             <select
@@ -719,8 +691,6 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
             </select>
           </label>
 
-          <input form="prep-form" type="hidden" name="customerRegionId" value={selected?.id ?? ""} />
-
           <label className="mt-3 flex flex-col gap-1">
             <span className="text-xs font-medium text-slate-800">رقم الزبون *</span>
             <input
@@ -735,17 +705,6 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
           </label>
 
           <label className="mt-3 flex flex-col gap-1">
-            <span className="text-xs font-medium text-slate-800">اسم الزبون (اختياري)</span>
-            <input
-              form="prep-form"
-              name="customerName"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              className={inputClass}
-            />
-          </label>
-
-          <label className="mt-3 flex flex-col gap-1">
             <span className="text-xs font-medium text-slate-800">وقت الطلب *</span>
             <input
               form="prep-form"
@@ -753,17 +712,6 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
               required
               value={orderTime}
               onChange={(e) => setOrderTime(e.target.value)}
-              className={inputClass}
-            />
-          </label>
-
-          <label className="mt-3 flex flex-col gap-1">
-            <span className="text-xs font-medium text-slate-800">أقرب نقطة دالة (اختياري)</span>
-            <input
-              form="prep-form"
-              name="customerLandmark"
-              value={customerLandmark}
-              onChange={(e) => setCustomerLandmark(e.target.value)}
               className={inputClass}
             />
           </label>
@@ -780,6 +728,10 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
       ) : null}
 
       <form id="prep-form" action={formAction} className="space-y-3">
+        <input type="hidden" name="p" value={auth.p} />
+        <input type="hidden" name="exp" value={auth.exp} />
+        <input type="hidden" name="s" value={auth.s} />
+        <input type="hidden" name="customerRegionId" value={selected?.id ?? ""} />
         <input type="hidden" name="shoppingPayload" value={shoppingPayloadJson} />
 
         {state.error ? (
@@ -793,20 +745,9 @@ export function PreparerSiteOrderPrepClient({ auth, preparerName, shops, homeHre
           disabled={pending || !canSubmit}
           className="w-full rounded-xl bg-gradient-to-r from-emerald-600 to-sky-600 px-4 py-3.5 text-sm font-black text-white shadow-md transition hover:from-emerald-700 hover:to-sky-700 disabled:opacity-50"
         >
-          {pending ? "جارٍ الإرسال…" : "رفع الطلب للنظام (طلب جديد للمندوب)"}
+          {pending ? "جارٍ الإرسال…" : "رفع الطلب للنظام 🚀"}
         </button>
-        {!canSubmit && products.length > 0 ? (
-          <p className="text-center text-xs text-slate-500">
-            أكمل المنطقة والهاتف والتسعير وعدد المحلات حتى يتفعّل الزر.
-          </p>
-        ) : null}
       </form>
-
-      <p className="text-center text-xs text-slate-500">
-        <Link href={preparerPath("/preparer/order/new", auth)} className="font-bold text-sky-700 hover:underline">
-          نموذج طلب يدوي بدون قائمة واتساب
-        </Link>
-      </p>
     </div>
   );
 }

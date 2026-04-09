@@ -40,6 +40,26 @@ export async function createCompanyPreparer(_prev: PreparerFormState, formData: 
   return { ok: true };
 }
 
+export async function deleteCompanyPreparer(_prev: PreparerFormState, formData: FormData): Promise<PreparerFormState> {
+  const denied = await requireAdmin(); if (denied) return denied;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return { error: "معرّف المجهز مفقود." };
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // حذف الروابط مع المحلات أولاً
+      await tx.preparerShop.deleteMany({ where: { preparerId: id } });
+      // حذف المجهز نفسه
+      await tx.companyPreparer.delete({ where: { id } });
+    });
+    revalidatePath("/admin/preparers");
+    return { ok: true };
+  } catch (e) {
+    console.error("deleteCompanyPreparer", e);
+    return { error: "تعذّر الحذف. قد يكون المجهز مرتبطاً بطلبات حالية." };
+  }
+}
+
 export async function payDailySalaryForCompanyPreparer(_prev: PreparerFormState, formData: FormData): Promise<PreparerFormState> {
   const denied = await requireAdmin(); if (denied) return denied;
   const preparerId = String(formData.get("preparerId") ?? "").trim();

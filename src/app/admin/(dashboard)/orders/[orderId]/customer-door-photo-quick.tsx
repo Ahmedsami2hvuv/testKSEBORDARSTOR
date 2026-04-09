@@ -58,7 +58,7 @@ export function CustomerDoorPhotoQuick({
             el.click();
           }}
         >
-          كاميرا
+          {pending ? "جارٍ الرفع..." : "كاميرا"}
         </button>
         <button
           type="button"
@@ -71,7 +71,7 @@ export function CustomerDoorPhotoQuick({
             el.click();
           }}
         >
-          معرض
+          {pending ? "جارٍ الرفع..." : "معرض"}
         </button>
         {hasImage && (
           <button

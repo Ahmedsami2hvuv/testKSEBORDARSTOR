@@ -1,7 +1,9 @@
 "use client";
 
+import { Fragment } from "react";
 import type { MandoubRow } from "@/app/mandoub/mandoub-order-table";
 import { OrderTypeLine } from "@/components/order-type-line";
+import { formatBaghdadDateFriendly, getBaghdadDateString } from "@/lib/baghdad-time";
 
 type Props = {
   rows: MandoubRow[];
@@ -44,6 +46,8 @@ export function UnifiedOrderListTable({
   renderOrderIdBadge,
   renderSelectActions,
 }: Props) {
+  let lastDateStr = "";
+
   return (
     <div className="overflow-x-auto">
       <table
@@ -87,42 +91,125 @@ export function UnifiedOrderListTable({
             rows.map((o) => {
               const selectable = showSelectColumn && isRowSelectable(o);
               const checked = isSelected(o.id);
+
+              const orderDate = o.createdAt ? new Date(o.createdAt) : null;
+              const currentDateStr = orderDate ? getBaghdadDateString(orderDate) : "unknown";
+
+              let separator = null;
+              if (currentDateStr !== lastDateStr) {
+                lastDateStr = currentDateStr;
+                separator = (
+                  <tr key={`date-sep-${currentDateStr}`} className="bg-slate-100/80">
+                    <td colSpan={colCount} className="px-4 py-3 text-right text-xs font-black text-black uppercase tracking-widest border-y border-slate-200">
+                      {orderDate ? formatBaghdadDateFriendly(orderDate) : "تاريخ غير معروف"}
+                    </td>
+                  </tr>
+                );
+              }
+
               return (
-                <tr
-                  key={o.id}
-                  onClick={() => onOpenRow(o.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onOpenRow(o.id);
-                    }
-                  }}
-                  tabIndex={0}
-                  role="link"
-                  className={`group cursor-pointer border-b border-slate-100 transition-colors ${
-                    o.reversePickup
-                      ? "bg-violet-50/70 hover:bg-violet-100/80"
-                      : "bg-white hover:bg-sky-50/90"
-                  }`}
-                >
-                  {showSelectColumn ? (
-                    <td
-                      className={`sticky right-0 z-10 w-14 min-w-[3.25rem] max-w-[3.5rem] align-top px-1 py-2.5 text-center shadow-[-4px_0_8px_-2px_rgba(15,23,42,0.1)] transition-colors ${
-                        o.reversePickup ? "bg-violet-50/70 group-hover:bg-violet-100/80" : "bg-white group-hover:bg-sky-50/90"
-                      }`}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {selectable ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => onToggleOne(o.id)}
-                            className="h-5 w-5 rounded border-sky-400 text-sky-600 accent-sky-600"
-                            title={selectedTitle}
-                            aria-label={`${selectedAriaPrefix} ${o.shortId}`}
-                          />
-                          {showStatusDotInSelectCol ? (
+                <Fragment key={o.id}>
+                  {separator}
+                  <tr
+                    onClick={() => onOpenRow(o.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onOpenRow(o.id);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="link"
+                    className={`group cursor-pointer border-b border-slate-100 transition-colors ${
+                      o.reversePickup
+                        ? "bg-violet-50/70 hover:bg-violet-100/80"
+                        : "bg-white hover:bg-sky-50/90"
+                    }`}
+                  >
+                    {showSelectColumn ? (
+                      <td
+                        className={`sticky right-0 z-10 w-14 min-w-[3.25rem] max-w-[3.5rem] align-top px-1 py-2.5 text-center shadow-[-4px_0_8px_-2px_rgba(15,23,42,0.1)] transition-colors ${
+                          o.reversePickup ? "bg-violet-50/70 group-hover:bg-violet-100/80" : "bg-white group-hover:bg-sky-50/90"
+                        }`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {selectable ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => onToggleOne(o.id)}
+                              className="h-5 w-5 rounded border-sky-400 text-sky-600 accent-sky-600"
+                              title={selectedTitle}
+                              aria-label={`${selectedAriaPrefix} ${o.shortId}`}
+                            />
+                            {showStatusDotInSelectCol ? (
+                              <span
+                                className={`inline-flex h-8 w-8 shrink-0 rounded-full sm:h-9 sm:w-9 ${o.statusClass}`}
+                                title={o.statusAr}
+                                aria-label={o.statusAr}
+                                role="img"
+                              />
+                            ) : null}
+                            {renderSelectActions ? (
+                              <div className="mt-0.5">{renderSelectActions(o)}</div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="inline-block text-slate-300" aria-hidden>
+                            —
+                          </span>
+                        )}
+                      </td>
+                    ) : null}
+                    <td className="px-2 py-2.5 align-top font-mono text-sm text-slate-600 tabular-nums sm:text-base">
+                      <div className="flex flex-col items-start gap-1">
+                        {o.prepaidAll ? (
+                          <span
+                            className="text-[11px] font-black leading-none text-red-700 sm:text-xs"
+                            title="كل شي واصل — لا نقد من الزبون"
+                          >
+                            واصل
+                          </span>
+                        ) : null}
+                        {o.reversePickup ? (
+                          <span
+                            className="text-[11px] font-black leading-none text-violet-800 sm:text-xs"
+                            title="تنبيه طلب عكسي استلام من الزبون وتسليم للعميل"
+                          >
+                            عكسي
+                          </span>
+                        ) : null}
+                        {o.hasCourierUploadedLocation ? (
+                          <span
+                            className="text-[11px] font-black leading-none text-violet-700 sm:text-xs"
+                            title="لوكيشن مرفوع من المندوب"
+                          >
+                            GPS
+                          </span>
+                        ) : null}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {!o.hasCustomerLocation ? (
+                            <span
+                              className="inline-block shrink-0 rounded bg-rose-600 px-1 py-0.5 text-[9px] font-black leading-none text-white"
+                              title="بدون لوكيشن للزبون"
+                              aria-label="بدون لوكيشن"
+                            >
+                              !
+                            </span>
+                          ) : null}
+                          {o.hasMoneyDeletedBadge ? (
+                            <span
+                              className="inline-block shrink-0 rounded bg-slate-500 px-1 py-0.5 text-[8px] font-black leading-none text-white"
+                              title="تعديل مالي (معاملة محذوفة)"
+                              aria-label="معاملة محذوفة"
+                            >
+                              $
+                            </span>
+                          ) : null}
+                          {renderOrderIdBadge ? (
+                            renderOrderIdBadge(o)
+                          ) : !showSelectColumn || !showStatusDotInSelectCol ? (
                             <span
                               className={`inline-flex h-8 w-8 shrink-0 rounded-full sm:h-9 sm:w-9 ${o.statusClass}`}
                               title={o.statusAr}
@@ -130,105 +217,63 @@ export function UnifiedOrderListTable({
                               role="img"
                             />
                           ) : null}
-                          {renderSelectActions ? (
-                            <div className="mt-0.5">{renderSelectActions(o)}</div>
-                          ) : null}
+                          <span className="tabular-nums">{o.shortId}</span>
                         </div>
-                      ) : (
-                        <span className="inline-block text-slate-300" aria-hidden>
-                          —
-                        </span>
-                      )}
-                    </td>
-                  ) : null}
-                  <td className="px-2 py-2.5 align-top font-mono text-sm text-slate-600 tabular-nums sm:text-base">
-                    <div className="flex flex-col items-start gap-1">
-                      {o.prepaidAll ? (
-                        <span
-                          className="text-[11px] font-black leading-none text-red-700 sm:text-xs"
-                          title="كل شي واصل — لا نقد من الزبون"
-                        >
-                          واصل
-                        </span>
-                      ) : null}
-                      {o.reversePickup ? (
-                        <span
-                          className="text-[11px] font-black leading-none text-violet-800 sm:text-xs"
-                          title="تنبيه طلب عكسي استلام من الزبون وتسليم للعميل"
-                        >
-                          عكسي
-                        </span>
-                      ) : null}
-                      {o.hasCourierUploadedLocation ? (
-                        <span
-                          className="text-[11px] font-black leading-none text-violet-700 sm:text-xs"
-                          title="لوكيشن مرفوع من المندوب"
-                        >
-                          GPS
-                        </span>
-                      ) : null}
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {!o.hasCustomerLocation ? (
-                          <span
-                            className="inline-block shrink-0 rounded bg-rose-600 px-1 py-0.5 text-[9px] font-black leading-none text-white"
-                            title="بدون لوكيشن للزبون"
-                            aria-label="بدون لوكيشن"
-                          >
-                            !
-                          </span>
-                        ) : null}
-                        {o.hasMoneyDeletedBadge ? (
-                          <span
-                            className="inline-block shrink-0 rounded bg-slate-500 px-1 py-0.5 text-[8px] font-black leading-none text-white"
-                            title="تعديل مالي (معاملة محذوفة)"
-                            aria-label="معاملة محذوفة"
-                          >
-                            $
-                          </span>
-                        ) : null}
-                        {renderOrderIdBadge ? (
-                          renderOrderIdBadge(o)
-                        ) : !showSelectColumn || !showStatusDotInSelectCol ? (
-                          <span
-                            className={`inline-flex h-8 w-8 shrink-0 rounded-full sm:h-9 sm:w-9 ${o.statusClass}`}
-                            title={o.statusAr}
-                            aria-label={o.statusAr}
-                            role="img"
-                          />
-                        ) : null}
-                        <span className="tabular-nums">{o.shortId}</span>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <div className="max-w-[14rem] break-words sm:max-w-[18rem]">
-                      {o.assignedCourierName?.trim() ? (
-                        <div className="mb-1 text-[11px] font-black text-emerald-800 sm:text-xs">
-                          {o.assignedCourierName}
+                    </td>
+                    <td className="px-2 py-2.5">
+                      <div className="max-w-[14rem] break-words sm:max-w-[18rem]">
+                        {o.assignedCourierName?.trim() ? (
+                          <div className="mb-1 text-[11px] font-black text-emerald-800 sm:text-xs">
+                            {o.assignedCourierName}
+                          </div>
+                        ) : null}
+                        <span className={`inline-block rounded-md ${o.shopNameHighlightClass}`}>
+                          {o.shopName}
+                        </span>
+                        {/* علامات الصادر والوارد المالية "من الخارج" */}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {o.wardMismatchType === "deficit" && (
+                            <span className="rounded bg-rose-600 px-1.5 py-0.5 text-[10px] font-black text-white shadow-sm ring-1 ring-rose-400">
+                              🔴 نقص بالوارد
+                            </span>
+                          )}
+                          {o.wardMismatchType === "excess" && (
+                            <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-black text-white shadow-sm ring-1 ring-emerald-400">
+                              🟢 زيادة بالوارد
+                            </span>
+                          )}
+                          {o.saderMismatchType === "deficit" && (
+                            <span className="rounded bg-orange-500 px-1.5 py-0.5 text-[10px] font-black text-white shadow-sm ring-1 ring-orange-300">
+                              📉 نقص بالصادر
+                            </span>
+                          )}
+                          {o.saderMismatchType === "excess" && (
+                            <span className="rounded bg-sky-500 px-1.5 py-0.5 text-[10px] font-black text-white shadow-sm ring-1 ring-sky-300">
+                              📈 زيادة بالصادر
+                            </span>
+                          )}
                         </div>
-                      ) : null}
-                      <span className={`inline-block rounded-md ${o.shopNameHighlightClass}`}>
-                        {o.shopName}
-                      </span>
-                    </div>
-                  </td>
-                  <td
-                    className={`max-w-[12rem] px-2 py-2.5 text-sm sm:max-w-[16rem] sm:text-base ${
-                      o.reversePickup ? "font-bold text-violet-900" : "text-slate-700"
-                    }`}
-                  >
-                    {o.regionLine}
-                  </td>
-                  <td className="max-w-[10rem] px-2 py-2.5 text-sm text-slate-800 sm:text-base">
-                    <OrderTypeLine orderType={o.orderType} />
-                  </td>
-                  <td className="px-2 py-2.5 font-mono tabular-nums text-slate-900">{o.priceStr}</td>
-                  <td className="px-2 py-2.5 font-mono tabular-nums text-cyan-700">{o.delStr}</td>
-                  <td className="px-2 py-2.5 font-mono text-sm tabular-nums text-slate-700 sm:text-base">
-                    {o.customerPhone || "—"}
-                  </td>
-                  <td className="px-2 py-2.5 text-sm text-slate-600 sm:text-base">{o.timeLine}</td>
-                </tr>
+                      </div>
+                    </td>
+                    <td
+                      className={`max-w-[12rem] px-2 py-2.5 text-sm sm:max-w-[16rem] sm:text-base ${
+                        o.reversePickup ? "font-bold text-violet-900" : "text-slate-700"
+                      }`}
+                    >
+                      {o.regionLine}
+                    </td>
+                    <td className="max-w-[10rem] px-2 py-2.5 text-sm text-slate-800 sm:text-base">
+                      <OrderTypeLine orderType={o.orderType} />
+                    </td>
+                    <td className="px-2 py-2.5 font-mono tabular-nums text-slate-900">{o.priceStr}</td>
+                    <td className="px-2 py-2.5 font-mono tabular-nums text-cyan-700">{o.delStr}</td>
+                    <td className="px-2 py-2.5 font-mono text-sm tabular-nums text-slate-700 sm:text-base">
+                      {o.customerPhone || "—"}
+                    </td>
+                    <td className="px-2 py-2.5 text-sm text-slate-600 sm:text-base">{o.timeLine}</td>
+                  </tr>
+                </Fragment>
               );
             })
           )}

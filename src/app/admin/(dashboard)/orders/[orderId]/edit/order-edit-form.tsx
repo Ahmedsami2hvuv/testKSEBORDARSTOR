@@ -21,7 +21,9 @@ import {
   type OrderEditState,
 } from "./actions";
 import { DeleteVoiceNoteButton } from "./delete-voice-note-button";
-import { AdminRegionSearchPicker, type AdminRegionOption } from "@/components/admin-region-search-picker";
+import { AdminRegionSearchPicker } from "@/components/admin-region-search-picker";
+import { AdminOrderFloatingBar } from "./admin-order-floating-bar";
+import { isReversePickupOrderType } from "@/lib/order-type-flags";
 
 const STATUS_OPTIONS = [
   { value: "pending", label: "قيد الانتظار (جديد)" },
@@ -70,6 +72,7 @@ export function OrderEditForm({
   defaultOrderImageUploadedByName,
   defaultCustomerDoorPhotoUrl,
   defaultCustomerDoorPhotoUploadedByName,
+  defaultCustomerLocationUploadedByName,
   defaultVoiceNoteUrl,
   defaultAdminVoiceNoteUrl,
   defaultOrderSubtotal,
@@ -101,6 +104,7 @@ export function OrderEditForm({
   defaultOrderImageUploadedByName: string | null;
   defaultCustomerDoorPhotoUrl: string | null;
   defaultCustomerDoorPhotoUploadedByName: string | null;
+  defaultCustomerLocationUploadedByName?: string | null;
   defaultVoiceNoteUrl: string | null;
   defaultAdminVoiceNoteUrl: string | null;
   defaultOrderSubtotal: string;
@@ -108,7 +112,6 @@ export function OrderEditForm({
   defaultTotalAmount: string;
   defaultOrderNoteTime: string;
   defaultAssignedCourierId: string;
-  /** كل شي واصل — لا نقد من الزبون للمندوب */
   defaultPrepaidAll: boolean;
   shops: ShopOpt[];
   regions: RegionOpt[];
@@ -134,6 +137,7 @@ export function OrderEditForm({
   const [totalAmount, setTotalAmount] = useState(defaultTotalAmount);
   const [summaryText, setSummaryText] = useState(defaultSummary);
   const [prepaidAllEnabled, setPrepaidAllEnabled] = useState(defaultPrepaidAll);
+  const [reversePickupEnabled, setReversePickupEnabled] = useState(isReversePickupOrderType(defaultOrderType));
   const formRef = useRef<HTMLFormElement>(null);
   const orderImgRef = useRef<HTMLInputElement>(null);
 
@@ -328,13 +332,14 @@ export function OrderEditForm({
   return (
     <>
     <div
-      className={`relative ${
-        prepaidAllEnabled
+      className={`relative pb-24 ${
+        prepaidAllEnabled || reversePickupEnabled
           ? "rounded-2xl border-2 border-red-300/85 bg-gradient-to-b from-red-50/90 to-red-50/35 p-4 shadow-inner shadow-red-100/40 sm:p-5"
           : ""
       } ${!custLocationUrl.trim() && !prepaidAllEnabled ? "rounded-xl ring-2 ring-rose-300 ring-offset-2 ring-offset-white" : ""}`}
     >
     <form
+      id="admin-order-edit-form"
       ref={formRef}
       action={formAction}
       encType="multipart/form-data"
@@ -512,42 +517,58 @@ export function OrderEditForm({
           />
         </label>
       </div>
-      <p className={`text-xs leading-relaxed ${ad.muted}`}>
-        عند حفظ طلب <strong className="text-slate-800">مُسلَّم</strong> يُعاد حساب{" "}
-        <strong className="text-slate-800">أجر المندوب</strong> تلقائياً من سعر الطلب والتوصيل، ويُحدَّث
-        المبلغ المتوقع في حركات الصادر/الوارد. عند إدخال سعر الطلب والتوصيل معاً يُحفظ المجموع كمجموعهما.
-        لتصحيح أسعار المناطق لجميع الطلبات المرتبطة، عدّل سعر التوصيل من{" "}
-        <Link href="/admin/regions" className={ad.link}>
-          المناطق
-        </Link>
-        .
-      </p>
 
-      <label
-        className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm text-slate-800 ${
-          prepaidAllEnabled
-            ? "border-red-400 bg-red-50/90"
-            : "border-slate-200 bg-slate-50/80"
-        }`}
-      >
-        <input
-          type="checkbox"
-          name="prepaidAll"
-          value="on"
-          checked={prepaidAllEnabled}
-          onChange={(e) => setPrepaidAllEnabled(e.target.checked)}
-          className="mt-1 h-5 w-5 shrink-0 rounded border-red-400 accent-red-600"
-        />
-        <span>
-          <span className={`font-bold ${prepaidAllEnabled ? "text-red-950" : "text-slate-900"}`}>
-            كل شي واصل
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label
+          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm text-slate-800 ${
+            prepaidAllEnabled
+              ? "border-red-400 bg-red-50/90"
+              : "border-slate-200 bg-slate-50/80"
+          }`}
+        >
+          <input
+            type="checkbox"
+            name="prepaidAll"
+            value="on"
+            checked={prepaidAllEnabled}
+            onChange={(e) => setPrepaidAllEnabled(e.target.checked)}
+            className="mt-1 h-5 w-5 shrink-0 rounded border-red-400 accent-red-600"
+          />
+          <span>
+            <span className={`font-bold ${prepaidAllEnabled ? "text-red-950" : "text-slate-900"}`}>
+              كل شي واصل
+            </span>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-700">
+              المندوب لا يستلم نقداً من الزبون (دفع مسبق).
+            </span>
           </span>
-          <span className="mt-1 block text-xs leading-relaxed text-slate-700">
-            المندوب لا يستلم نقداً من الزبون (دفع مسبق/إلكتروني بما فيه التوصيل). يُميّز الطلب في لوحة
-            المندوب. أزل الصح لإلغاء التفعيل.
+        </label>
+
+        <label
+          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm text-slate-800 ${
+            reversePickupEnabled
+              ? "border-amber-400 bg-amber-50/90"
+              : "border-slate-200 bg-slate-50/80"
+          }`}
+        >
+          <input
+            type="checkbox"
+            name="reversePickup"
+            value="on"
+            checked={reversePickupEnabled}
+            onChange={(e) => setReversePickupEnabled(e.target.checked)}
+            className="mt-1 h-5 w-5 shrink-0 rounded border-amber-400 accent-amber-600"
+          />
+          <span>
+            <span className={`font-bold ${reversePickupEnabled ? "text-amber-950" : "text-slate-900"}`}>
+              طلب عكسي
+            </span>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-700">
+              استلام من الزبون وتسليم للعميل.
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      </div>
 
       <label className="flex flex-col gap-1 text-sm">
         <span className={ad.label}>وقت الطلب</span>
@@ -636,6 +657,7 @@ export function OrderEditForm({
               {locBusy ? "جارٍ التحديث…" : "تبديل الموقع (GPS)"}
             </button>
           </div>
+          <ImageUploaderCaption name={defaultCustomerLocationUploadedByName} />
           <p className={`text-xs ${ad.muted}`}>
             يطلب مسح أو استبدال الموقع تأكيداً قبل التنفيذ. الاستبدال يستخدم موقعك الحالي من المتصفح.
           </p>
@@ -654,7 +676,7 @@ export function OrderEditForm({
       <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className={ad.label}>صورة باب الزبون</span>
-          <CustomerDoorPhotoQuick orderId={orderId} />
+          <CustomerDoorPhotoQuick orderId={orderId} hasImage={!!defaultCustomerDoorPhotoUrl} />
         </div>
         {customerDoorSrc ? (
           <div className="mt-3">
@@ -707,7 +729,8 @@ export function OrderEditForm({
             />
             <button
               type="button"
-              className="rounded-lg border border-sky-400 bg-sky-100 px-3 py-1.5 text-xs font-bold text-sky-900 hover:bg-sky-200"
+              disabled={pending}
+              className="rounded-lg border border-sky-400 bg-sky-100 px-3 py-1.5 text-xs font-bold text-sky-900 hover:bg-sky-200 disabled:opacity-60"
               onClick={() => {
                 const el = orderImgRef.current;
                 if (!el) return;
@@ -715,11 +738,12 @@ export function OrderEditForm({
                 el.click();
               }}
             >
-              كاميرا
+              {pending ? "جارٍ الرفع..." : "كاميرا"}
             </button>
             <button
               type="button"
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 hover:bg-slate-50"
+              disabled={pending}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
               onClick={() => {
                 const el = orderImgRef.current;
                 if (!el) return;
@@ -727,7 +751,7 @@ export function OrderEditForm({
                 el.click();
               }}
             >
-              معرض
+              {pending ? "جارٍ الرفع..." : "معرض"}
             </button>
           </div>
         </div>
@@ -777,6 +801,11 @@ export function OrderEditForm({
       </button>
     </form>
     </div>
+
+    <AdminOrderFloatingBar
+      pending={pending}
+      hasCustomerImportChoice={!!state.pendingCustomerImport}
+    />
 
     {state.pendingCustomerImport ? (
       <div

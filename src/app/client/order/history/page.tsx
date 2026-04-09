@@ -8,6 +8,7 @@ import type { EmployeeOrderPortalVerifyReason } from "@/lib/employee-order-porta
 import { verifyEmployeeOrderPortalQuery } from "@/lib/employee-order-portal-link";
 import { prisma } from "@/lib/prisma";
 import { normalizeIraqMobileLocal11 } from "@/lib/whatsapp";
+import { formatDinarAsAlfWithUnit } from "@/lib/money-alf";
 
 export const dynamic = "force-dynamic";
 
@@ -44,14 +45,6 @@ function statusAr(v: string): string {
     default:
       return v || "—";
   }
-}
-
-function maskPhoneLocal(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
-  if (digits.length >= 10) {
-    return `${digits.slice(0, 3)}****${digits.slice(-4)}`;
-  }
-  return phone.trim() ? "****" : "—";
 }
 
 type Props = {
@@ -114,20 +107,16 @@ export default async function ClientOrderHistoryPage({ searchParams }: Props) {
     where: { shopId: employee.shop.id },
     orderBy: { createdAt: "desc" },
     take: 100,
-    select: {
-      orderNumber: true,
-      status: true,
-      orderType: true,
-      createdAt: true,
-      customerPhone: true,
-      orderNoteTime: true,
-    },
+    include: {
+      customerRegion: { select: { name: true } },
+    }
   });
 
   const e = sp.e ?? "";
   const exp = sp.exp ?? "";
   const sig = sp.s ?? "";
-  const orderFormHref = clientOrderFormPath(e, exp, sig);
+  // تعديل: تمرير رقم الهاتف (viewer) ليعرف النظام اسم العميل في صفحة الطلب
+  const orderFormHref = clientOrderFormPath(e, exp, sig, viewer);
   const accountHref = clientOrderAccountPath(e, exp, sig);
 
   return (
@@ -156,11 +145,12 @@ export default async function ClientOrderHistoryPage({ searchParams }: Props) {
         </header>
 
         <section className="kse-glass-dark rounded-2xl border border-slate-200 p-4">
-          <h2 className="text-sm font-bold text-slate-800">رقم الهاتف</h2>
+          <h2 className="text-sm font-bold text-slate-800">رقم الهاتف لمتابعة وتعديل طلباتك</h2>
+          <p className="mt-1 text-xs text-slate-500 mb-3">أدخل رقم هاتفك لتتمكن من رؤية كافة التفاصيل وتعديل طلباتك النشطة.</p>
           <form
             method="get"
             action="/client/order/history"
-            className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end"
+            className="flex flex-col gap-2 sm:flex-row sm:items-end"
           >
             <input type="hidden" name="e" value={sp.e ?? ""} />
             <input type="hidden" name="exp" value={sp.exp ?? ""} />
@@ -194,27 +184,41 @@ export default async function ClientOrderHistoryPage({ searchParams }: Props) {
               لا توجد طلبات مسجّلة لهذا المحل بعد.
             </p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-3">
               {orders.map((o) => {
                 const rowPhone = o.customerPhone?.trim() ?? "";
                 const rowNorm = normalizeIraqMobileLocal11(rowPhone);
                 const isYours = Boolean(viewer && rowNorm && rowNorm === viewer);
-                const canEdit = isYours && (o.status === "pending" || o.status === "assigned");
+                const canEdit = (o.status === "pending" || o.status === "assigned");
+
                 const typeLine = o.orderType?.trim() || "—";
                 const timeNote = o.orderNoteTime?.trim();
+                const regionName = o.customerRegion?.name || "بدون منطقة";
+                const summary = o.summary?.trim();
+
                 return (
                   <li
                     key={o.orderNumber}
-                    className={`rounded-2xl border px-4 py-3 shadow-sm ${
+                    className={`rounded-2xl border px-4 py-4 shadow-sm transition-all ${
                       isYours
-                        ? "border-emerald-300 bg-emerald-50/90"
+                        ? "border-emerald-300 bg-emerald-50/90 ring-1 ring-emerald-200"
                         : "border-slate-200 bg-white/90"
                     }`}
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-base font-black tabular-nums text-slate-900">
-                        #{o.orderNumber}
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-black tabular-nums text-slate-900">
+                          #{o.orderNumber}
+                        </span>
+                        <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${o.status === 'pending' ? 'bg-blue-100 text-blue-700' : 'bg-sky-100 text-sky-800'}`}>
+                          {statusAr(o.status)}
+                        </span>
+                        {o.prepaidAll && (
+                          <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                            واصل
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2">
                         <span
                           className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
@@ -223,35 +227,67 @@ export default async function ClientOrderHistoryPage({ searchParams }: Props) {
                               : "bg-slate-200 text-slate-800"
                           }`}
                         >
-                          {isYours ? "هذا الرقم" : `زبون آخر · ${maskPhoneLocal(rowPhone)}`}
+                          {isYours ? "طلبي" : `زبون آخر · ${rowPhone}`}
                         </span>
                         {canEdit ? (
                           <Link
-                            href={clientOrderEditPath(e, exp, sig, o.orderNumber, rowNorm ?? viewer)}
+                            href={clientOrderEditPath(e, exp, sig, o.orderNumber, rowPhone)}
                             aria-label={`تعديل الطلب رقم ${o.orderNumber}`}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-base leading-none text-amber-900 shadow-sm transition hover:bg-amber-100"
-                            title="تعديل الطلب"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border-2 border-amber-400 bg-white text-lg leading-none text-amber-600 shadow-md transition hover:scale-110 hover:bg-amber-50 active:scale-95"
+                            title="تعديل بيانات الطلب"
                           >
                             ✏️
                           </Link>
                         ) : null}
                       </div>
                     </div>
-                    <p className="mt-2 text-sm font-medium text-slate-800">{typeLine}</p>
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-600">
-                      <span className="font-semibold text-sky-900">{statusAr(o.status)}</span>
-                      <span className="tabular-nums">
-                        {o.createdAt.toLocaleString("ar-IQ-u-nu-latn", {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })}
-                      </span>
+
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start gap-4">
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-slate-900">{typeLine}</p>
+                          <p className="text-xs text-slate-600 mt-0.5">📍 {regionName}</p>
+                        </div>
+                        <div className="text-left shrink-0">
+                          {o.orderSubtotal != null && (
+                            <p className="text-sm font-bold text-slate-900 tabular-nums" dir="ltr">
+                              {formatDinarAsAlfWithUnit(o.orderSubtotal)} بدون توصيل
+                            </p>
+                          )}
+                          {o.deliveryPrice != null && (
+                            <p className="text-xs text-slate-500 tabular-nums" dir="ltr">
+                              {formatDinarAsAlfWithUnit(o.deliveryPrice)} كلفة توصيل
+                            </p>
+                          )}
+                          {o.totalAmount != null && (
+                            <p className="mt-1 text-sm font-black text-emerald-700 tabular-nums" dir="ltr">
+                              بضاعة: {formatDinarAsAlfWithUnit(o.totalAmount)} مع التوصيل
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {isYours && summary && (
+                        <div className="mt-2 rounded-lg border border-sky-100 bg-white/50 p-2 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
+                          <span className="font-bold text-sky-900 block mb-1">الملاحظات:</span>
+                          {summary}
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 border-t border-slate-100 text-[10px] text-slate-500">
+                        <span className="tabular-nums">
+                          📅 {o.createdAt.toLocaleString("ar-IQ-u-nu-latn", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          })}
+                        </span>
+                        {timeNote && (
+                          <span className="font-medium text-slate-600">
+                            🕒 وقت الطلب: {timeNote}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    {timeNote ? (
-                      <p className="mt-1 text-xs text-slate-500">
-                        <span className="font-semibold text-slate-600">وقت الطلب:</span> {timeNote}
-                      </p>
-                    ) : null}
                   </li>
                 );
               })}

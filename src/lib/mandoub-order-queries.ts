@@ -16,7 +16,7 @@ export const mandoubOrderDetailInclude = {
       alternatePhone: true,
     },
   },
-  courier: { select: { name: true, vehicleType: true } },
+  courier: { select: { name: true, phone: true, vehicleType: true } },
   moneyEvents: {
     orderBy: { createdAt: "asc" as const },
     include: {

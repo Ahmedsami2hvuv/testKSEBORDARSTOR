@@ -11,6 +11,8 @@ import {
   type TelegramInlineKeyboard,
 } from "@/lib/telegram";
 import { getPreparerMoneyTotals } from "./preparer-combined-wallet-totals";
+import { buildCompanyPreparerPortalUrl } from "./company-preparer-portal-link";
+import { buildDelegatePortalUrl } from "./delegate-link";
 
 function alfLine(label: string, value: string): string {
   return `${label} ${escapeTelegramHtml(value)} الف`;
@@ -49,10 +51,12 @@ export async function notifyTelegramPreparerWalletEvent(input: {
   const emoji = isRejected ? "❌ تحويل مرفوض" : isIn ? "🔴 وارد للمحفظة" : "🟢 صادر من المحفظة";
   const amount = formatDinarAsAlfWithUnit(input.amountDinar);
   const remain = totals ? formatDinarAsAlfWithUnit(totals.remain) : "—";
+  const dateStr = new Date().toLocaleDateString("ar-IQ-u-nu-latn", { dateStyle: "short" });
 
   const text = [
     `<b>💰 حركة محفظة مجهز</b>`,
     `<b>المجهز:</b> ${escapeTelegramHtml(preparer?.name || "—")}`,
+    `<b>التاريخ:</b> ${dateStr}`,
     `<b>النوع:</b> ${emoji}`,
     `<b>المبلغ:</b> ${amount}`,
     `<b>التفاصيل:</b> ${escapeTelegramHtml(input.label)}`,
@@ -123,33 +127,38 @@ export async function notifyTelegramNewOrder(orderId: string): Promise<void> {
   });
   if (!order) return;
 
-  const text = formatNewOrderTelegramHtml({
-    shopName: order.shop.name, customerName: order.customer?.name?.trim() || "—",
-    regionName: order.customerRegion?.name ?? "—", orderType: order.orderType,
-    orderSubtotal: order.orderSubtotal, deliveryPrice: order.deliveryPrice, totalAmount: order.totalAmount,
-    orderNumber: order.orderNumber, customerPhone: order.customerPhone, orderId: order.id,
+  const baseUrl = getPublicAppUrl();
+  const adminText = formatNewOrderTelegramHtml({
+    ...order, shopName: order.shop.name, customerName: order.customer?.name ?? "—",
+    regionName: order.customerRegion?.name ?? "—", orderId: order.id
   });
 
-  const on = String(order.orderNumber);
-  const kb: TelegramInlineKeyboard = buildTelegramOrderKeyboard(order.orderNumber, order.id);
+  // إرسال للإدارة (رابط الإدارة)
+  const adminKb = buildTelegramOrderKeyboard(order.orderNumber, order.id);
+  await sendTelegramMessageWithKeyboard(adminText, adminKb);
 
-  await sendTelegramMessageWithKeyboard(text, kb);
-
+  // إرسال للمجهزين المرتبطين بالمحل
   const preparers = await prisma.companyPreparer.findMany({
     where: { active: true, telegramUserId: { not: "" }, shopLinks: { some: { shopId: order.shopId } } }
   });
 
   for (const prep of preparers) {
-    if (prep.telegramUserId) {
-      await sendTelegramMessageWithKeyboardToChat(prep.telegramUserId, `🔔 <b>طلب جديد لمحل تابع لك:</b>\n\n${text}`, kb);
-    }
+    const prepUrl = buildCompanyPreparerPortalUrl(prep.id, prep.portalToken, baseUrl);
+    const prepOrderUrl = `${prepUrl.replace("/preparer", `/preparer/order/${order.id}`)}`;
+
+    const prepText = formatOrderBodyLines({
+      ...order, shopName: order.shop.name, customerName: order.customer?.name ?? "—",
+      regionName: order.customerRegion?.name ?? "—"
+    }).join("\n") + `\n\n🔗 <a href="${prepOrderUrl}">فتح الطلب من حسابك</a>`;
+
+    await sendTelegramHtmlToChat(prep.telegramUserId, `🔔 <b>طلب جديد لمحل تابع لك:</b>\n\n${prepText}`);
   }
 }
 
 export function formatNewOrderTelegramHtml(input: any, options?: any): string {
   const lines = formatOrderBodyLines(input);
   if (!options?.omitAdminLink) {
-    lines.push(`🔗 <a href="${escapeTelegramHtml(getPublicAppUrl() + '/admin/orders/' + input.orderId)}">رابط الطلبية</a>`);
+    lines.push(`🔗 <a href="${escapeTelegramHtml(getPublicAppUrl() + '/admin/orders/' + input.orderId)}">رابط الإدارة</a>`);
   }
   return lines.join("\n");
 }
@@ -157,10 +166,11 @@ export function formatNewOrderTelegramHtml(input: any, options?: any): string {
 export async function notifyTelegramMoneyEvent(input: any): Promise<void> {
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
-    include: { shop: true, customer: true, customerRegion: true }
+    include: { shop: true, customer: true, customerRegion: true, courier: true }
   });
   if (!order) return;
 
+  const baseUrl = getPublicAppUrl();
   const header = input.kind === "pickup_out" ? "💸 للعميل 💸" : "💸 من الزبون 💸";
   const body = formatOrderBodyLines({ 
     ...order, 
@@ -169,27 +179,25 @@ export async function notifyTelegramMoneyEvent(input: any): Promise<void> {
     regionName: order.customerRegion?.name ?? "" 
   });
 
-  const text = [
+  const textBase = [
     escapeTelegramHtml(header),
     `👤 ${escapeTelegramHtml(input.courierName)}`,
     alfLine("💰", formatDinarAsAlf(input.amountDinar)),
     ...body
   ].join("\n");
 
-  const on = String(order.orderNumber);
-  const kb: TelegramInlineKeyboard = buildTelegramOrderKeyboard(order.orderNumber, order.id);
+  // إرسال للإدارة
+  await sendTelegramMessage(textBase);
 
-  await sendTelegramMessageWithKeyboard(text, kb);
-
-  const preparers = await prisma.companyPreparer.findMany({
-    where: { active: true, telegramUserId: { not: "" }, shopLinks: { some: { shopId: order.shopId } } }
-  });
-
-  for (const prep of preparers) {
-    if (prep.telegramUserId) {
-      await sendTelegramMessageWithKeyboardToChat(prep.telegramUserId, `💸 <b>تحديث مالي لمحل تابع لك:</b>\n\n${text}`, kb);
-    }
+  // إرسال للمندوب (رابط حسابه)
+  if (order.courier?.telegramUserId) {
+    const courierUrl = buildDelegatePortalUrl(order.courier.id, baseUrl);
+    const courierOrderUrl = `${courierUrl.replace("/mandoub", `/mandoub/order/${order.id}`)}`;
+    const courierText = textBase + `\n\n🔗 <a href="${courierOrderUrl}">فتح الطلب من حسابك</a>`;
+    await sendTelegramHtmlToChat(order.courier.telegramUserId, courierText);
   }
+
+  // تم إلغاء إرسال إشعارات التحديثات المالية للطلبات إلى المجهزين بناءً على طلب المستخدم
 }
 
 export async function notifyTelegramPresenceChange(input: any): Promise<void> {

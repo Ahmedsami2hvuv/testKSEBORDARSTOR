@@ -116,10 +116,6 @@ type Tx = Prisma.TransactionClient;
 
 /**
  * دالة تسجيل القيود المالية المزدوجة (الطرفين) فور قبول التحويل.
- * تضمن:
- * 1. تسجيل "أعطيت" (صادر) عند المرسل.
- * 2. تسجيل "أخذت" (وارد) عند المستلم.
- * 3. تحديث متبقي المحفظة وذمة الإدارة تلقائياً.
  */
 export async function writeLedgerEntriesForAcceptedTransfer(
   tx: Tx,
@@ -139,29 +135,35 @@ export async function writeLedgerEntriesForAcceptedTransfer(
   const toName = await resolvePartyDisplayName(transfer.toKind, transfer.toCourierId, transfer.toEmployeeId);
   const loc = transfer.handoverLocation.trim() || "—";
 
-  // 1. تسجيل الصادر (أعطيت) عند المرسل
-  if (transfer.fromKind === WalletPeerPartyKind.courier && transfer.fromCourierId) {
-    await tx.courierWalletMiscEntry.create({
-      data: {
-        courierId: transfer.fromCourierId,
-        direction: CourierWalletMiscDirection.give,
-        amountDinar: transfer.amountDinar,
-        label: `تحويل إلى ${toName} — ${loc}`,
-      },
-    });
-  } else if (transfer.fromKind === WalletPeerPartyKind.employee && transfer.fromEmployeeId) {
-    await tx.employeeWalletMiscEntry.create({
-      data: {
-        employeeId: transfer.fromEmployeeId,
-        direction: CourierWalletMiscDirection.give,
-        amountDinar: transfer.amountDinar,
-        label: `تحويل إلى ${toName} — ${loc}`,
-      },
-    });
+  // تعديل: إذا كان التحويل موجهاً للإدارة، لا نسجل "أعطيت" في سجل المحفظة للمندوب
+  // لأن المبلغ سيُستقطع مباشرة من خانة "للإدارة" في الحسابات الكلية.
+  const isToAdmin = transfer.toKind === WalletPeerPartyKind.admin;
+
+  // 1. تسجيل الصادر (أعطيت) عند المرسل - فقط إذا لم يكن المستلم هو الإدارة
+  if (!isToAdmin) {
+    if (transfer.fromKind === WalletPeerPartyKind.courier && transfer.fromCourierId) {
+      await tx.courierWalletMiscEntry.create({
+        data: {
+          courierId: transfer.fromCourierId,
+          direction: CourierWalletMiscDirection.give,
+          amountDinar: transfer.amountDinar,
+          label: `تحويل إلى ${toName} — ${loc}`,
+        },
+      });
+    } else if (transfer.fromKind === WalletPeerPartyKind.employee && transfer.fromEmployeeId) {
+      await tx.employeeWalletMiscEntry.create({
+        data: {
+          employeeId: transfer.fromEmployeeId,
+          direction: CourierWalletMiscDirection.give,
+          amountDinar: transfer.amountDinar,
+          label: `تحويل إلى ${toName} — ${loc}`,
+        },
+      });
+    }
   }
 
   // 2. تسجيل الوارد (أخذت) عند المستلم
-  if (transfer.toKind === WalletPeerPartyKind.admin) return; // الإدارة لا تسجل في ledger المحفظة اليدوية
+  if (isToAdmin) return; // الإدارة لا تسجل في ledger المحفظة اليدوية
 
   if (transfer.toKind === WalletPeerPartyKind.courier && transfer.toCourierId) {
     await tx.courierWalletMiscEntry.create({

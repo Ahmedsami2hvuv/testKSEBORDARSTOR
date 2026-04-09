@@ -35,7 +35,7 @@ const STATUS_AR: Record<string, string> = {
   assigned: "مسند للمندوب",
   delivering: "قيد التوصيل",
   delivered: "تم التسليم",
-  cancelled: "ملغى",
+  cancelled: "ملغي",
   archived: "مؤرشف",
 };
 
@@ -79,8 +79,6 @@ export default async function EditOrderPage({ params }: Props) {
         })
       : null;
 
-  // نفس فكرة الفول باك في واجهة المندوب:
-  // قد تكون صورة باب الزبون مخزّنة في `CustomerPhoneProfile` بينما حقل الطلب فارغ.
   const defaultCustomerDoorPhotoUrlEffective: string | null =
     order.customerDoorPhotoUrl?.trim() ||
     customerPhoneProfile?.photoUrl?.trim() ||
@@ -132,8 +130,6 @@ export default async function EditOrderPage({ params }: Props) {
   const customers = customersAll.filter(
     (c) => !courierPhoneKeys.has(phoneMatchKey(c.phone)),
   );
-  const shopPhoneForBar =
-    order.shop.phone?.trim() || order.submittedBy?.phone?.trim() || "";
 
   const adminMoneyEvents = order.moneyEvents.map((e) => ({
     id: e.id,
@@ -201,6 +197,7 @@ export default async function EditOrderPage({ params }: Props) {
           defaultOrderImageUploadedByName={order.orderImageUploadedByName}
           defaultCustomerDoorPhotoUrl={defaultCustomerDoorPhotoUrlEffective}
           defaultCustomerDoorPhotoUploadedByName={order.customerDoorPhotoUploadedByName}
+          defaultCustomerLocationUploadedByName={order.customerLocationUploadedByName}
           defaultVoiceNoteUrl={order.voiceNoteUrl}
           defaultAdminVoiceNoteUrl={order.adminVoiceNoteUrl}
           defaultOrderSubtotal={
@@ -240,27 +237,8 @@ export default async function EditOrderPage({ params }: Props) {
         events={adminMoneyEvents}
       />
       <AdminOrderFloatingBar
-        orderId={order.id}
-        shopPhone={shopPhoneForBar}
-        customerPhone={order.customerPhone ?? ""}
-        customerAlternatePhone={order.alternatePhone ?? ""}
-        preparerPhone={order.submittedByCompanyPreparer?.phone ?? ""}
-        orderStatus={order.status}
-        orderNumber={order.orderNumber}
-        shopName={order.shop.name}
-        city={order.customerRegion?.name ?? ""}
-        totalPrice={order.totalAmount != null ? formatDinarAsAlfWithUnit(order.totalAmount) : ""}
-        deliveryName={order.courier?.name ?? ""}
-        customerLocationUrl={
-          order.customerLocationUrl?.trim() || order.customer?.customerLocationUrl?.trim() || ""
-        }
-        customerLandmark={
-          order.customerLandmark?.trim() || order.customer?.customerLandmark?.trim() || ""
-        }
-        hasCustomerLocation={Boolean(
-          order.customerLocationUrl?.trim() || order.customer?.customerLocationUrl?.trim(),
-        )}
-        hasCourierUploadedLocation={Boolean(order.customerLocationSetByCourierAt)}
+        pending={false}
+        hasCustomerImportChoice={false}
       />
     </div>
   );

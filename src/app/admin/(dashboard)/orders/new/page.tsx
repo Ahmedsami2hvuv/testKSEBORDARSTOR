@@ -10,8 +10,8 @@ export const metadata = {
 };
 
 export default async function AdminCreateOrderPage() {
-  // جلب المحلات، المناطق، الزبائن (للملء التلقائي)، والموظفين (كأزرار سريعة)
-  const [shops, regions, customers, employees] = await Promise.all([
+  // جلب المحلات، المناطق، الزبائن (للملء التلقائي)، والموظفين (كأزرار سريعة)، والمجهزين (لطلبات التجهيز)
+  const [shops, regions, customers, employees, preparers] = await Promise.all([
     prisma.shop.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, regionId: true, locationUrl: true },
@@ -42,6 +42,11 @@ export default async function AdminCreateOrderPage() {
       },
       orderBy: { name: "asc" },
     }),
+    prisma.companyPreparer.findMany({
+      where: { active: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, availableForAssignment: true },
+    }),
   ]);
 
   return (
@@ -54,13 +59,16 @@ export default async function AdminCreateOrderPage() {
       <header className="space-y-1">
         <h1 className={ad.h1}>إضافة طلب من الإدارة</h1>
         <p className={ad.lead}>
-          ثلاثة مسارات: <strong>رفع من محل</strong> (بحث عن المحل ثم عميل من المحل أو الإدارة)،{" "}
-          <strong>وجهة واحدة إدارية</strong> (وجهة الإدارة برقم ثابت)، أو{" "}
-          <strong>وجهتان</strong> (مرسل ومستلم). البحث عن بيانات محفوظة يعتمد على{" "}
-          <strong>الرقم + المنطقة</strong>.
+          خيارات متعددة: <strong>رفع من محل</strong>، <strong>وجهة واحدة</strong>، <strong>وجهتان</strong>، أو <strong>طلب تجهيز (تحليل رسالة)</strong>.
         </p>
       </header>
-      <AdminCreateOrderForm shops={shops} regions={regions} customers={customers} employees={employees} />
+      <AdminCreateOrderForm
+        shops={shops}
+        regions={regions}
+        customers={customers}
+        employees={employees}
+        preparers={preparers}
+      />
     </div>
   );
 }

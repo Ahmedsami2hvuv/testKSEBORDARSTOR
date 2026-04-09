@@ -53,6 +53,18 @@ export function MandoubQuickDoorSecondCapture({
     form.requestSubmit();
   }
 
+  const handleCamClick = () => {
+    if (window.confirm("تنبيه: هل تريد التقاط صورة (ثانية) لباب الزبون؟")) {
+      camInputRef.current?.click();
+    }
+  };
+
+  const handleGalClick = () => {
+    if (window.confirm("هل تريد اختيار صورة (ثانية) لباب الزبون من المعرض؟")) {
+      galInputRef.current?.click();
+    }
+  };
+
   return (
     <div className="grid grid-cols-2 items-center gap-2">
       <form
@@ -75,11 +87,11 @@ export function MandoubQuickDoorSecondCapture({
         />
         <button
           type="button"
-          onClick={() => camInputRef.current?.click()}
+          onClick={handleCamClick}
           disabled={compressing}
-          className="inline-flex w-full items-center justify-center rounded-xl border border-sky-400 bg-sky-50 px-3 py-2 text-sm font-bold text-sky-900 shadow-sm hover:bg-sky-100 disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center rounded-xl border-2 border-emerald-400 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900 shadow-sm hover:bg-emerald-100 disabled:opacity-60"
         >
-          كاميرا
+          كاميرا الزبون 2
         </button>
       </form>
 
@@ -102,11 +114,11 @@ export function MandoubQuickDoorSecondCapture({
         />
         <button
           type="button"
-          onClick={() => galInputRef.current?.click()}
+          onClick={handleGalClick}
           disabled={compressing}
-          className="inline-flex w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-60"
         >
-          معرض
+          معرض الزبون 2
         </button>
       </form>
       {compressing ? (

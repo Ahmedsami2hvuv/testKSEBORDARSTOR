@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { formatDinarAsAlfWithUnit } from "@/lib/money-alf";
 import { prisma } from "@/lib/prisma";
 import { ad } from "@/lib/admin-ui";
-import { AdminOrderFloatingBar } from "./edit/admin-order-floating-bar";
 import { AdminOrderMoneyEvents } from "./admin-order-money-events";
 import { OrderViewContent } from "./order-view-content";
 import { normalizeIraqMobileLocal11 } from "@/lib/whatsapp";
@@ -27,24 +26,31 @@ export async function generateMetadata({ params }: Props) {
 export default async function AdminOrderViewPage({ params }: Props) {
   const { orderId } = await params;
 
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      shop: true,
-      customerRegion: true,
-      courier: true,
-      customer: true,
-      submittedBy: true,
-      submittedByCompanyPreparer: true,
-      moneyEvents: {
-        orderBy: { createdAt: "asc" },
-        include: {
-          courier: { select: { name: true } },
-          recordedByCompanyPreparer: { select: { name: true } },
+  const [order, preparers] = await Promise.all([
+    prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        shop: true,
+        customerRegion: true,
+        courier: true,
+        customer: true,
+        submittedBy: true,
+        submittedByCompanyPreparer: true,
+        moneyEvents: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            courier: { select: { name: true } },
+            recordedByCompanyPreparer: { select: { name: true } },
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.companyPreparer.findMany({
+      where: { active: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true }
+    })
+  ]);
 
   if (!order) {
     notFound();
@@ -131,9 +137,6 @@ export default async function AdminOrderViewPage({ params }: Props) {
     secondCustomerPhoneProfile?.landmark?.trim() ||
     "";
 
-  const shopPhoneForBar =
-    order.shop.phone?.trim() || order.submittedBy?.phone?.trim() || "";
-
   const adminMoneyEvents = order.moneyEvents.map((e) => ({
     id: e.id,
     kind: e.kind,
@@ -204,10 +207,11 @@ export default async function AdminOrderViewPage({ params }: Props) {
       ? { name: order.courier.name, phone: order.courier.phone }
       : null,
     customer: order.customer ? { name: order.customer.name } : null,
-    submittedBy: order.submittedBy ? { name: order.submittedBy.name } : null,
+    submittedBy: order.submittedBy ? { name: order.submittedBy.name, phone: order.submittedBy.phone } : null,
     submittedByCompanyPreparer: order.submittedByCompanyPreparer
       ? { name: order.submittedByCompanyPreparer.name, phone: order.submittedByCompanyPreparer.phone }
       : null,
+    preparerShoppingJson: order.preparerShoppingJson,
   };
 
   return (
@@ -223,28 +227,11 @@ export default async function AdminOrderViewPage({ params }: Props) {
           تفاصيل للقراءة فقط — للتعديل استخدم زر «تعديل الطلب».
         </p>
       </div>
-      <OrderViewContent order={view} />
+      <OrderViewContent order={view} preparers={preparers} />
       <AdminOrderMoneyEvents
         orderNumber={order.orderNumber}
         nextPath={`/admin/orders/${order.id}`}
         events={adminMoneyEvents}
-      />
-      <AdminOrderFloatingBar
-        orderId={order.id}
-        shopPhone={shopPhoneForBar}
-        customerPhone={order.customerPhone ?? ""}
-        customerAlternatePhone={order.secondCustomerPhone ?? order.alternatePhone ?? ""}
-        preparerPhone={order.submittedByCompanyPreparer?.phone ?? ""}
-        orderStatus={order.status}
-        orderNumber={order.orderNumber}
-        shopName={order.shop.name}
-        city={order.customerRegion?.name ?? ""}
-        totalPrice={order.totalAmount != null ? formatDinarAsAlfWithUnit(order.totalAmount) : ""}
-        deliveryName={order.courier?.name ?? ""}
-        customerLocationUrl={customerLocationUrlEffective}
-        customerLandmark={customerLandmarkEffective}
-        hasCustomerLocation={Boolean(customerLocationUrlEffective)}
-        hasCourierUploadedLocation={Boolean(order.customerLocationSetByCourierAt)}
       />
     </div>
   );

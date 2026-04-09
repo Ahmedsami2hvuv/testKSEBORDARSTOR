@@ -22,6 +22,7 @@ export function computeMoneySumsFromCourierEvents(
     kind: string;
     amountDinar: Decimal;
     createdAt: Date;
+    recordedByCompanyPreparerId?: string | null;
   }>,
   courierId: string,
   baseline: Date | null,
@@ -33,6 +34,9 @@ export function computeMoneySumsFromCourierEvents(
 
   for (const e of events) {
     if (!e.courierId || e.courierId !== courierId) continue;
+    // حماية كارثية: إذا كانت الحركة مسجلة بواسطة مجهز، لا تدخل في حسابات المندوب الشخصية
+    if (e.recordedByCompanyPreparerId) continue;
+
     if (baseline && e.createdAt <= baseline) continue;
     if (e.kind === MONEY_KIND_PICKUP) {
       sumPickupOut = sumPickupOut.plus(e.amountDinar);
@@ -92,10 +96,12 @@ export async function fetchMandoubMoneySumsForCourier(
   baseline: Date | null,
 ): Promise<MandoubMoneySums> {
   // جلب حركات الطلبات الفعلية المسجلة باسم المندوب
+  // تم استثناء الحركات التي سجلها المجهز من الـ WHERE لضمان عدم تأثر المحفظة
   const orderEvents = await prisma.orderCourierMoneyEvent.findMany({
     where: {
       courierId,
       deletedAt: null,
+      recordedByCompanyPreparerId: null, // استثناء حركات المجهز
       ...(baseline ? { createdAt: { gt: baseline } } : {}),
     },
     select: {
@@ -103,6 +109,7 @@ export async function fetchMandoubMoneySumsForCourier(
       kind: true,
       amountDinar: true,
       createdAt: true,
+      recordedByCompanyPreparerId: true,
     },
   });
 
@@ -133,6 +140,7 @@ export async function fetchOrderOnlyMoneySumsForCourier(
     where: {
       courierId,
       deletedAt: null,
+      recordedByCompanyPreparerId: null, // استثناء حركات المجهز
       ...(baseline ? { createdAt: { gt: baseline } } : {}),
     },
     select: {
@@ -140,6 +148,7 @@ export async function fetchOrderOnlyMoneySumsForCourier(
       kind: true,
       amountDinar: true,
       createdAt: true,
+      recordedByCompanyPreparerId: true,
     },
   });
 

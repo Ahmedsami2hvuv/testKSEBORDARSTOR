@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ad } from "@/lib/admin-ui";
 import { parseDateRangeFromSearchParams } from "@/lib/report-dates";
 import {
+  filterWalletTxnRowsByQuery,
   loadWalletTransactionReport,
   parsePartyFilterFromSearchParams,
 } from "@/lib/wallet-transactions-report";
@@ -17,15 +18,16 @@ export const metadata = {
 };
 
 type Props = {
-  searchParams: Promise<{ from?: string; to?: string; party?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; party?: string; q?: string }>;
 };
 
 export default async function GeneralWalletReportPage({ searchParams }: Props) {
   const sp = await searchParams;
   const { from, to, fromInput, toInput } = parseDateRangeFromSearchParams(sp);
   const partyFilter = parsePartyFilterFromSearchParams(sp);
+  const q = (sp.q ?? "").trim();
 
-  const [rows, couriers, employeesRaw, preparers] = await Promise.all([
+  const [rawRows, couriers, employeesRaw, preparers] = await Promise.all([
     loadWalletTransactionReport(from, to, partyFilter),
     prisma.courier.findMany({
       orderBy: { name: "asc" },
@@ -55,6 +57,8 @@ export default async function GeneralWalletReportPage({ searchParams }: Props) {
     shopName: e.shop.name,
   }));
 
+  const rows = filterWalletTxnRowsByQuery(rawRows, q);
+
   return (
     <div className="space-y-4" dir="rtl">
       <div className="flex flex-wrap gap-2 mb-4">
@@ -81,10 +85,18 @@ export default async function GeneralWalletReportPage({ searchParams }: Props) {
         couriers={couriers}
         employees={employees}
         preparers={preparers}
+        searchQuery={q}
+        showSearch
       />
 
       <ReportSectionIntro>
         عدد السجلات: <strong className="text-slate-800">{rows.length}</strong>
+        {q ? (
+          <>
+            {" "}
+            (من أصل <strong className="tabular-nums">{rawRows.length}</strong> في النطاق)
+          </>
+        ) : null}
         {" — "}
         النطاق:{" "}
         <span className="tabular-nums" dir="ltr">

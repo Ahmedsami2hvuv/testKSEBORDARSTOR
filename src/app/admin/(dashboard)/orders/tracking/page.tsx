@@ -6,9 +6,10 @@ import { courierAssignableWhere } from "@/lib/courier-assignable";
 import { prisma } from "@/lib/prisma";
 import { ad } from "@/lib/admin-ui";
 import {
-  deliveredSaderMismatch,
-  deliveredWardMismatch,
+  isWardMismatch,
+  isSaderMismatch,
   sumDeliveryInFromOrderMoneyEvents,
+  sumPickupOutFromOrderMoneyEvents,
 } from "@/lib/mandoub-money";
 import { hasCustomerLocationUrl } from "@/lib/order-location";
 import { routeModeOrFromQuery } from "@/lib/admin-super-search";
@@ -23,7 +24,6 @@ export const metadata = {
   title: "تتبع الطلبات — أبو الأكبر للتوصيل",
 };
 
-/** مثال: كوزمتك الجمال(ليلى) — بدون قوسين إن لم يُسجَّل اسم للعميل */
 function formatShopWithCustomer(
   shopName: string,
   customerName: string | null | undefined,
@@ -46,7 +46,7 @@ const STATUS_STANDARD = [
 ] as const;
 
 type Props = {
-  searchParams: Promise<{ status?: string; q?: string; wardFilter?: string }>;
+  searchParams: Promise<{ status?: string; q?: string; wardFilter?: string; saderFilter?: string }>;
 };
 
 export default async function OrderTrackingPage({ searchParams }: Props) {
@@ -62,6 +62,8 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
   const q = (sp.q ?? "").trim();
   const wardFilter: "lower" | "higher" =
     sp.wardFilter === "higher" ? "higher" : "lower";
+  const saderFilter: "lower" | "higher" =
+    sp.saderFilter === "lower" ? "lower" : "higher";
 
   const where: Prisma.OrderWhereInput = {};
 
@@ -72,7 +74,6 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
   ) {
     where.status = statusFilter;
   } else if (statusFilter === "all") {
-    /** «الكل» = بدون المرفوضة ولا المؤرشفة */
     where.status = { notIn: ["cancelled", "archived"] };
   }
 
@@ -141,37 +142,17 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
   ]);
 
   if (statusFilter === "checkSader") {
-    orders = orders.filter((o) =>
-      deliveredSaderMismatch(
-        o.status,
-        o.totalAmount,
-        o.orderSubtotal,
-        o.deliveryPrice,
-        sumDeliveryInFromOrderMoneyEvents(o.moneyEvents),
-      ),
-    );
+    orders = orders.filter((o) => {
+      const type = isSaderMismatch(o.status, o.orderSubtotal, sumPickupOutFromOrderMoneyEvents(o.moneyEvents)).type;
+      return saderFilter === "higher" ? type === "excess" : type === "deficit";
+    });
   } else if (statusFilter === "checkWard") {
-    orders = orders.filter((o) =>
-      wardFilter === "higher"
-        ? deliveredSaderMismatch(
-            o.status,
-            o.totalAmount,
-            o.orderSubtotal,
-            o.deliveryPrice,
-            sumDeliveryInFromOrderMoneyEvents(o.moneyEvents),
-          )
-        : deliveredWardMismatch(
-            o.status,
-            o.totalAmount,
-            o.orderSubtotal,
-            o.deliveryPrice,
-            sumDeliveryInFromOrderMoneyEvents(o.moneyEvents),
-          ),
-    );
+    orders = orders.filter((o) => {
+      const type = isWardMismatch(o.status, o.totalAmount, sumDeliveryInFromOrderMoneyEvents(o.moneyEvents)).type;
+      return wardFilter === "higher" ? type === "excess" : type === "deficit";
+    });
   }
 
-  // ترتيب العرض داخل «الكل» يكون حسب الحالة أولاً ثم رقم الطلب تنازلياً.
-  // حتى لو اختلفت أوقات الإنشاء، تبقى التسلسلية واضحة كما طلبت: جديد → بانتظار المندوب → عند المندوب → تم التسليم.
   function statusPriority(s: string): number {
     if (s === "pending") return 0;
     if (s === "assigned") return 1;
@@ -194,12 +175,12 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
   function hrefTracking(opts: {
     status: string;
     wardFilter?: "lower" | "higher";
+    saderFilter?: "lower" | "higher";
   }): string {
     const p = new URLSearchParams();
     if (opts.status !== "all") p.set("status", opts.status);
-    if (opts.status === "checkWard" && opts.wardFilter === "higher") {
-      p.set("wardFilter", "higher");
-    }
+    if (opts.status === "checkWard" && opts.wardFilter) p.set("wardFilter", opts.wardFilter);
+    if (opts.status === "checkSader" && opts.saderFilter) p.set("saderFilter", opts.saderFilter);
     if (q) p.set("q", q);
     return p.toString() ? `/admin/orders/tracking?${p}` : "/admin/orders/tracking";
   }
@@ -213,7 +194,7 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
     regionName: o.customerRegion?.name ?? o.shop.region.name,
     orderType: o.orderType || "—",
     routeModeLabel: o.routeMode === "double" ? "وجهتين" : "",
-    totalLabel: o.totalAmount != null ? formatDinarAsAlf(o.totalAmount) : "—",
+    totalLabel: o.orderSubtotal != null ? formatDinarAsAlf(o.orderSubtotal) : "—",
     deliveryLabel: o.deliveryPrice != null ? formatDinarAsAlf(o.deliveryPrice) : "—",
     customerPhone: o.customerPhone || "—",
     courierName: o.courier?.name ?? "—",
@@ -222,6 +203,11 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
       o.customer?.customerLocationUrl,
     ),
     hasCourierUploadedLocation: Boolean(o.customerLocationSetByCourierAt),
+    summary: o.summary,
+    preparerShoppingJson: o.preparerShoppingJson,
+    wardMismatchType: isWardMismatch(o.status, o.totalAmount, sumDeliveryInFromOrderMoneyEvents(o.moneyEvents)).type,
+    saderMismatchType: isSaderMismatch(o.status, o.orderSubtotal, sumPickupOutFromOrderMoneyEvents(o.moneyEvents)).type,
+    createdAt: o.createdAt,
   }));
 
   const statusTabs = [
@@ -274,7 +260,7 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
           );
         })}
         <Link
-          href={hrefTracking({ status: "checkSader" })}
+          href={hrefTracking({ status: "checkSader", saderFilter })}
           className={`rounded-full px-3 py-1.5 text-sm font-bold transition ${
             statusFilter === "checkSader"
               ? "bg-emerald-600 text-white ring-2 ring-emerald-400 shadow-sm"
@@ -317,33 +303,40 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
       {statusFilter === "checkSader" ? (
         <div className="space-y-2">
           <p className="rounded-xl border border-emerald-200 bg-emerald-50/90 px-3 py-2 text-sm text-emerald-950">
-            <strong>فحص الصادر:</strong> طلبات <strong>مسلّمة</strong> حيث المبلغ المُسلَّم{" "}
-            <strong>أكبر</strong> من المجموع المتوقع (سعر الطلب + التوصيل).
+            <strong>فحص الصادر:</strong> طلبات حيث المبلغ المدفوع للمحل يختلف عن سعر البضاعة.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold text-slate-600">فلتر:</span>
-            <span className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white ring-2 ring-emerald-400">
-              المبلغ أعلى من المتوقع
-            </span>
+            <Link
+              href={hrefTracking({ status: "checkSader", saderFilter: "lower" })}
+              className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                saderFilter === "lower"
+                  ? "bg-emerald-600 text-white ring-2 ring-emerald-400"
+                  : "border border-emerald-200 bg-white text-emerald-900 hover:bg-emerald-50"
+              }`}
+            >
+              المبلغ أقل من سعر البضاعة
+            </Link>
+            <Link
+              href={hrefTracking({ status: "checkSader", saderFilter: "higher" })}
+              className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                saderFilter === "higher"
+                  ? "bg-emerald-600 text-white ring-2 ring-emerald-400"
+                  : "border border-emerald-200 bg-white text-emerald-900 hover:bg-emerald-50"
+              }`}
+            >
+              المبلغ أعلى من سعر البضاعة
+            </Link>
           </div>
         </div>
       ) : null}
       {statusFilter === "checkWard" ? (
         <div className="space-y-2">
           <p className="rounded-xl border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-950">
-            <strong>فحص الوارد:</strong> طلبات <strong>مسلّمة</strong> حيث المبلغ المُسلَّم{" "}
-            {wardFilter === "higher" ? (
-              <>
-                <strong>أكبر</strong> من المجموع المتوقع (سعر الطلب + التوصيل).
-              </>
-            ) : (
-              <>
-                <strong>أقل</strong> من المجموع المتوقع (سعر الطلب + التوصيل).
-              </>
-            )}
+            <strong>فحص الوارد:</strong> طلبات مسلّمة حيث المبلغ المستلم من الزبون يختلف عن المجموع الكلي.
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-bold text-slate-600">فلتر داخل فحص الوارد:</span>
+            <span className="text-xs font-bold text-slate-600">فلتر:</span>
             <Link
               href={hrefTracking({ status: "checkWard", wardFilter: "lower" })}
               className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
@@ -376,7 +369,7 @@ export default async function OrderTrackingPage({ searchParams }: Props) {
             }
           >
             <OrderTrackingSearch
-              key={`${statusFilter}-${wardFilter}`}
+              key={`${statusFilter}-${wardFilter}-${saderFilter}`}
               initialQ={q}
               statusFilter={statusFilter}
               wardFilter={wardFilter}

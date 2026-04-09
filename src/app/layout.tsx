@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Cairo } from "next/font/google";
 import { EnterSubmitGlobal } from "@/components/enter-submit-global";
 import { PwaServiceWorkerRegister } from "@/components/pwa-service-worker-register";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 const cairo = Cairo({
@@ -16,7 +17,8 @@ export const metadata: Metadata = {
   description: "إدارة التوصيل والطلبات — لوحة الإدارة",
   manifest: "/site.webmanifest",
   icons: {
-    apple: [{ url: "/pwa-icon-192.png", sizes: "192x192" }],
+    icon: "/icon.png",
+    apple: "/apple-icon.png",
   },
   appleWebApp: {
     capable: true,
@@ -42,11 +44,14 @@ export default function RootLayout({
       lang="ar"
       dir="rtl"
       className={`${cairo.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body className={`${cairo.className} min-h-full flex flex-col`}>
-        <PwaServiceWorkerRegister />
-        <EnterSubmitGlobal />
-        {children}
+        <ThemeProvider>
+          <PwaServiceWorkerRegister />
+          <EnterSubmitGlobal />
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

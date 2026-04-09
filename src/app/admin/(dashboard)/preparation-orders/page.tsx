@@ -126,6 +126,12 @@ export default async function PreparationOrdersPage({ searchParams }: Props) {
         <p className={`mt-1 ${ad.lead}`}>الطلبات التي رُفعت عبر بوابة المجهّز — الفواتير تبقى هنا حتى بعد التصفير اليومي للمجهز.</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <Link
+            href="/admin/preparation-orders/drafts/new"
+            className="inline-flex min-h-[40px] items-center rounded-xl border-2 border-slate-900 bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800"
+          >
+            إضافة مسودة للتحضير
+          </Link>
+          <Link
             href="/admin/orders/new"
             className="inline-flex min-h-[40px] items-center rounded-xl border-2 border-violet-500 bg-violet-600 px-4 py-2 text-sm font-bold text-white hover:bg-violet-700"
           >

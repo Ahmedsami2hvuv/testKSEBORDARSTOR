@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { ALF_PER_DINAR } from "@/lib/money-alf";
 import { verifyCompanyPreparerPortalQuery } from "@/lib/company-preparer-portal-link";
 import { preparerPath } from "@/lib/preparer-portal-nav";
@@ -12,18 +13,44 @@ type Props = {
   searchParams: Promise<{ p?: string; exp?: string; s?: string }>;
 };
 
+function invalidMsg(reason: string) {
+  switch (reason) {
+    case "expired":
+      return "انتهت صلاحية الرابط. اطلب رابطاً جديداً من الإدارة.";
+    case "bad_signature":
+    case "missing":
+      return "الرابط غير صالح. تأكد من نسخه كاملاً.";
+    case "no_secret":
+      return "إعداد الخادم غير مكتمل.";
+    default:
+      return "تعذّر التحقق.";
+  }
+}
+
 export default async function PreparerPreparationEditPage({ params, searchParams }: Props) {
   const { orderId } = await params;
   const sp = await searchParams;
-  const v = verifyCompanyPreparerPortalQuery(sp.p, sp.exp, sp.s);
+  const cookieStore = await cookies();
+
+  // جلب بيانات التوثيق من الرابط أو الكوكيز
+  const p = sp.p || (await cookieStore).get("preparer_p")?.value;
+  const exp = sp.exp || (await cookieStore).get("preparer_exp")?.value;
+  const s = sp.s || (await cookieStore).get("preparer_s")?.value;
+
+  const v = verifyCompanyPreparerPortalQuery(p, exp, s);
 
   if (!v.ok) {
     return (
       <div className="kse-app-inner mx-auto max-w-md px-4 py-16">
         <p className="text-center font-bold text-rose-700">الرابط غير صالح</p>
+        <p className="mt-2 text-center text-xs text-slate-500">يرجى العودة للرابط الأصلي.</p>
       </div>
     );
   }
+
+  const auth = { p: p!, exp: exp!, s: s! };
+  const home = preparerPath("/preparer", auth);
+  const prep = preparerPath("/preparer/preparation", auth);
 
   const preparer = await prisma.companyPreparer.findFirst({
     where: { id: v.preparerId, active: true },
@@ -35,10 +62,6 @@ export default async function PreparerPreparationEditPage({ params, searchParams
       },
     },
   });
-
-  const auth = { p: sp.p ?? "", exp: sp.exp ?? "", s: sp.s ?? "" };
-  const home = preparerPath("/preparer", auth);
-  const prep = preparerPath("/preparer/preparation", auth);
 
   if (!preparer) {
     return (
@@ -123,7 +146,7 @@ export default async function PreparerPreparationEditPage({ params, searchParams
       }
       return { line, buyAlf, sellAlf };
     })
-    .filter((x): x is { line: string; buyAlf: number; sellAlf: number } => x != null);
+    .filter((x): x is { line: string; buyAlf: number; sellAlf: number } => x !== null);
 
   const placesCountNum = Number(payload?.placesCount);
   if (payload?.version !== 1 || !String(payload?.titleLine ?? "").trim() || products.length === 0) {

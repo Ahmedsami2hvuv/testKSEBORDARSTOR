@@ -4,6 +4,7 @@ import { verifyEmployeeOrderPortalQuery } from "@/lib/employee-order-portal-link
 import { prisma } from "@/lib/prisma";
 import { normalizeIraqMobileLocal11 } from "@/lib/whatsapp";
 import { ClientOrderForm } from "./client-order-form";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 
 export const dynamic = "force-dynamic";
 
@@ -81,9 +82,20 @@ export default async function ClientOrderPage({ searchParams }: Props) {
   const editOrderNumber = Number.parseInt(editRaw, 10);
   const isEditMode = Number.isInteger(editOrderNumber) && editOrderNumber > 0;
 
+  const viewerPhone = normalizeIraqMobileLocal11(sp.phone ?? "");
+  let viewerName = "";
+  if (viewerPhone) {
+    const cust = await prisma.customer.findFirst({
+      where: { shopId: shop.id, phone: viewerPhone },
+      select: { name: true },
+    });
+    viewerName = cust?.name || "";
+  }
+
   let initialOrder: {
     orderNumber: number;
     customerPhone: string;
+    customerName: string;
     orderType: string;
     orderSubtotal: string;
     alternatePhone: string;
@@ -96,7 +108,6 @@ export default async function ClientOrderPage({ searchParams }: Props) {
   } | null = null;
 
   if (isEditMode) {
-    const viewerPhone = normalizeIraqMobileLocal11(sp.phone ?? "");
     if (!viewerPhone) {
       return (
         <div className="kse-app-bg flex min-h-screen flex-col px-4 py-16 text-slate-800">
@@ -127,6 +138,7 @@ export default async function ClientOrderPage({ searchParams }: Props) {
         customerLocationUrl: true,
         customerLandmark: true,
         prepaidAll: true,
+        customer: { select: { name: true } },
         customerRegion: {
           select: { id: true, name: true, deliveryPrice: true },
         },
@@ -176,6 +188,7 @@ export default async function ClientOrderPage({ searchParams }: Props) {
     initialOrder = {
       orderNumber: foundOrder.orderNumber,
       customerPhone: foundOrder.customerPhone ?? "",
+      customerName: foundOrder.customer?.name || "",
       orderType: foundOrder.orderType ?? "",
       orderSubtotal:
         foundOrder.orderSubtotal == null
@@ -196,7 +209,10 @@ export default async function ClientOrderPage({ searchParams }: Props) {
   }
 
   return (
-    <div className="kse-app-bg min-h-screen px-4 py-8 pb-16 text-slate-800">
+    <div className="kse-app-bg relative min-h-screen px-4 py-8 pb-16 text-slate-800">
+      <div className="absolute top-4 left-4 z-50">
+        <ThemeSwitcher />
+      </div>
       <div className="kse-app-inner">
         <ClientOrderForm
           shopName={shop.name}
@@ -207,6 +223,7 @@ export default async function ClientOrderPage({ searchParams }: Props) {
           e={sp.e!}
           exp={sp.exp!}
           sig={sp.s!}
+          viewerName={viewerName}
           initialOrder={initialOrder}
         />
       </div>

@@ -9,6 +9,7 @@ import {
   setPreparerMonthlySalaryResetConfig,
   updateCompanyPreparer,
   renewCompanyPreparerPortalToken,
+  deleteCompanyPreparer,
   type PreparerFormState,
 } from "./actions";
 import { whatsappMeUrl } from "@/lib/whatsapp";
@@ -207,6 +208,8 @@ function PreparerCard({
   const [sState, shopsAction, sPending] = useActionState(setPreparerShops, initial);
   const [salaryState, salaryAction, salaryPending] = useActionState(payDailySalaryForCompanyPreparer, initial);
   const [resetState, resetAction, resetPending] = useActionState(setPreparerMonthlySalaryResetConfig, initial);
+  const [dState, deleteAction, dPending] = useActionState(deleteCompanyPreparer, initial);
+
   const linked = new Set(row.linkedShopIds);
   const canSubmit = new Set(row.canSubmitShopIds);
 
@@ -236,6 +239,20 @@ function PreparerCard({
             )}
           </p>
         </div>
+
+        <form action={deleteAction} onSubmit={(e) => {
+          if (!confirm(`هل أنت متأكد من مسح المجهز "${row.name}" تماماً؟ لا يمكن التراجع عن هذا الإجراء.`)) e.preventDefault();
+        }}>
+          <input type="hidden" name="id" value={row.id} />
+          <button
+            type="submit"
+            disabled={dPending}
+            className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-black text-rose-700 shadow-sm transition hover:bg-rose-100 disabled:opacity-50"
+          >
+            {dPending ? "جارٍ المسح…" : "🗑️ مسح المجهز"}
+          </button>
+          {dState?.error && <p className="mt-1 text-[10px] font-bold text-rose-700">{dState.error}</p>}
+        </form>
       </div>
 
       {row.telegramUserId?.trim() ? (

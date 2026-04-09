@@ -205,6 +205,17 @@ model Courier {
   walletTransfersOut WalletPeerTransfer[] @relation("WalletTransferFromCourier")
   walletTransfersIn  WalletPeerTransfer[] @relation("WalletTransferToCourier")
   webPushSubscriptions WebPushSubscription[]
+  tips              CourierTip[]
+}
+
+model CourierTip {
+  id          String   @id @default(cuid())
+  courierId   String
+  courier     Courier  @relation(fields: [courierId], references: [id], onDelete: Cascade)
+  amountDinar Decimal  @db.Decimal(14, 4)
+  createdAt   DateTime @default(now())
+  @@index([courierId])
+  @@index([createdAt])
 }
 
 model CourierWalletMiscEntry {
@@ -347,6 +358,7 @@ model Order {
   @@index([secondCustomerRegionId])
   @@index([routeMode])
   @@index([customerId])
+  @@index([customerPhone])
 }
 
 model MandoubWaButtonSetting {
@@ -517,6 +529,17 @@ model StoreOrderItem {
   lineSaleDinar Decimal @db.Decimal(14, 4)
   lineCostDinar Decimal @db.Decimal(14, 4)
   lineProfitDinar Decimal @db.Decimal(14, 4)
+}
+
+model UISystemSetting {
+  id          String   @id @default(cuid())
+  target      String   // "mandoub" | "preparer" | "admin" | "customer"
+  section     String   // "order_card" | "wallet_block" | "order_details" | "accounting"
+  config      Json     // لتخزين الألوان، الصور، الترتيب، الحجوم، والشفافية
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([target, section])
 }
 
 enum CourierVehicleType {

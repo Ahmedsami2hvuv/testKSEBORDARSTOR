@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { verifyCompanyPreparerPortalQuery } from "@/lib/company-preparer-portal-link";
 import { preparerCourierAssignWhere } from "@/lib/courier-assignable";
 import { preparerPath } from "@/lib/preparer-portal-nav";
@@ -28,7 +29,14 @@ function invalidMsg(reason: string) {
 export default async function PreparerOrderDetailPage({ params, searchParams }: Props) {
   const { orderId } = await params;
   const sp = await searchParams;
-  const v = verifyCompanyPreparerPortalQuery(sp.p, sp.exp, sp.s);
+  const cookieStore = await cookies();
+
+  // جلب بيانات التوثيق من الرابط أو الكوكيز
+  const p = sp.p || (await cookieStore).get("preparer_p")?.value;
+  const exp = sp.exp || (await cookieStore).get("preparer_exp")?.value;
+  const s = sp.s || (await cookieStore).get("preparer_s")?.value;
+
+  const v = verifyCompanyPreparerPortalQuery(p, exp, s);
 
   if (!v.ok) {
     return (
@@ -82,7 +90,7 @@ export default async function PreparerOrderDetailPage({ params, searchParams }: 
     where: { phone_regionId: { phone: secondPhoneNorm, regionId: order.secondCustomerRegionId } },
   }) : null;
 
-  const auth = { p: sp.p ?? "", exp: sp.exp ?? "", s: sp.s ?? "" };
+  const auth = { p: p!, exp: exp!, s: s! };
   const homeHref = preparerPath("/preparer", auth);
 
   const couriers = await prisma.courier.findMany({
@@ -95,7 +103,6 @@ export default async function PreparerOrderDetailPage({ params, searchParams }: 
 
   return (
     <div className="kse-app-inner mx-auto max-w-lg px-3 py-4 pb-24 sm:px-4">
-      {/* تحويل الرابط إلى زر */}
       <div className="mb-4">
         <Link href={homeHref} className="inline-flex items-center justify-center rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-bold text-sky-900 shadow-sm transition hover:bg-sky-100">
           ← الطلبات

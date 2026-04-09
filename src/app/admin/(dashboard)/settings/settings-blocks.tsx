@@ -50,7 +50,7 @@ function Block({
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
-  tone?: "sky" | "emerald" | "amber" | "rose";
+  tone?: "sky" | "emerald" | "amber" | "rose" | "indigo";
 }) {
   const toneClasses = useMemo(() => {
     switch (tone) {
@@ -74,6 +74,13 @@ function Block({
           focus: "focus-visible:ring-rose-300/60",
           badge: "bg-rose-50 text-rose-800 border-rose-200",
           hover: "hover:border-rose-300 hover:shadow-rose-200/40",
+        };
+      case "indigo":
+        return {
+          border: "border-indigo-200/90",
+          focus: "focus-visible:ring-indigo-300/60",
+          badge: "bg-indigo-50 text-indigo-800 border-indigo-200",
+          hover: "hover:border-indigo-300 hover:shadow-indigo-200/40",
         };
       default:
         return {
@@ -123,10 +130,49 @@ function Block({
 }
 
 export function SettingsBlocks({ notificationInitial }: { notificationInitial: NotificationInitial }) {
-  const [openId, setOpenId] = useState<string>("whatsapp");
+  const [openId, setOpenId] = useState<string>("ui-designer");
 
   return (
     <div className="space-y-4">
+      {/* قسم مصمم الواجهات الجديد */}
+      <Block
+        id="ui-designer"
+        title="مصمم الواجهات الذكي 🎨"
+        subtitle="تحكم كامل في الألوان، الصور، وترتيب البلوكات في الموقع."
+        open={openId === "ui-designer"}
+        onToggle={() => setOpenId((x) => (x === "ui-designer" ? "" : "ui-designer"))}
+        tone="indigo"
+      >
+        <Link
+          href="/admin/settings/ui-designer"
+          className="group relative flex items-start justify-between gap-4 rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm outline-none transition hover:-translate-y-[1px] hover:border-indigo-300 hover:bg-gradient-to-b hover:from-indigo-50/70 hover:to-white hover:shadow-md focus-visible:ring-2 focus-visible:ring-indigo-300/60 sm:p-5"
+        >
+          <div className="min-w-0">
+            <p className="font-extrabold text-slate-900 text-lg">فتح المصمم 🖌️</p>
+            <p className="mt-1 text-sm leading-relaxed text-slate-600">
+              قم بتغيير ترتيب العناصر في صفحة الطلب، تعديل ألوان المحفظة، ووضع خلفيات صور مخصصة لكل حالة.
+            </p>
+            <p className="mt-2 text-xs font-black text-indigo-700 transition group-hover:text-indigo-800">
+              دخول إلى واجهة التعديل الآن ←
+            </p>
+          </div>
+          <span
+            className="mt-1 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-indigo-200 bg-white text-indigo-700 shadow-sm transition group-hover:border-indigo-300 group-hover:bg-indigo-50"
+            aria-hidden
+          >
+            <svg
+              className="h-6 w-6 transition group-hover:-translate-x-0.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2.2}
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+          </span>
+        </Link>
+      </Block>
+
       <Block
         id="whatsapp"
         title="إعدادات واتساب"
@@ -213,4 +259,3 @@ export function SettingsBlocks({ notificationInitial }: { notificationInitial: N
     </div>
   );
 }
-

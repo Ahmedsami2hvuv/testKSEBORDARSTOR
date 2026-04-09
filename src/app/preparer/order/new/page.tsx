@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { verifyCompanyPreparerPortalQuery } from "@/lib/company-preparer-portal-link";
 import { ALF_PER_DINAR } from "@/lib/money-alf";
 import { preparerPath } from "@/lib/preparer-portal-nav";
@@ -17,7 +18,7 @@ function invalidMsg(reason: string) {
       return "انتهت صلاحية الرابط. اطلب رابطاً جديداً من الإدارة.";
     case "bad_signature":
     case "missing":
-      return "الرابط غير صالح. تأكد من نسخه كاملاً.";
+      return "الرابط غير صالح. تأكد من نسخه كاملًا.";
     case "no_secret":
       return "إعداد الخادم غير مكتمل.";
     default:
@@ -27,7 +28,14 @@ function invalidMsg(reason: string) {
 
 export default async function PreparerOrderNewPage({ searchParams }: Props) {
   const sp = await searchParams;
-  const v = verifyCompanyPreparerPortalQuery(sp.p, sp.exp, sp.s);
+  const cookieStore = await cookies();
+
+  // جلب بيانات التوثيق من الرابط أو الكوكيز
+  const p = sp.p || (await cookieStore).get("preparer_p")?.value;
+  const exp = sp.exp || (await cookieStore).get("preparer_exp")?.value;
+  const s = sp.s || (await cookieStore).get("preparer_s")?.value;
+
+  const v = verifyCompanyPreparerPortalQuery(p, exp, s);
 
   if (!v.ok) {
     return (
@@ -60,7 +68,7 @@ export default async function PreparerOrderNewPage({ searchParams }: Props) {
     );
   }
 
-  const auth = { p: sp.p ?? "", exp: sp.exp ?? "", s: sp.s ?? "" };
+  const auth = { p: p!, exp: exp!, s: s! };
   const homeHref = preparerPath("/preparer", auth);
 
   const shops = preparer.shopLinks.map((l) => ({

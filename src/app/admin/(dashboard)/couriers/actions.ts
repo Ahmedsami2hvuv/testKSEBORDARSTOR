@@ -4,9 +4,6 @@ import type { CourierVehicleType } from "@prisma/client";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { adminCookieName, verifyAdminToken } from "@/lib/auth";
-import { fetchMandoubMoneySumsForCourier } from "@/lib/mandoub-courier-event-totals";
-import { mandoubWalletRemainDinar } from "@/lib/mandoub-wallet-carry";
-import { sumPendingIncomingForCourier, sumPendingOutgoingForCourier } from "@/lib/wallet-peer-transfer";
 import {
   isPlausibleWhatsAppNumber,
   normalizePhoneDigits,
@@ -24,13 +21,6 @@ async function assertAdmin(): Promise<boolean> {
   return !!(t && (await verifyAdminToken(t)));
 }
 
-/**
- * تصفير المحفظة:
- * 1. تعيين خط أساس زمني جديد (mandoubTotalsResetAt) لإخفاء الحركات القديمة من العرض الحالي.
- * 2. تصفير الرصيد المحمول (mandoubWalletCarryOverDinar) ليصبح متبقي المحفظة 0.
- * ملاحظة: مربع "للإدارة" يعتمد على سجل الأحداث التراكمي (All Time) لذا لن يتأثر بالتصفير،
- * لكنه سيتأثر عند تسجيل حركات "أعطيت" فعلية.
- */
 export async function resetCourierMandoubTotals(
   courierId: string,
   _prev: CourierMandoubResetState,
@@ -44,7 +34,6 @@ export async function resetCourierMandoubTotals(
     return { error: "المندوب غير موجود." };
   }
 
-  // عند التصفير، نجعل المحمول 0 ونحدّث الوقت، ليكون متبقي المحفظة في الفترة الجديدة 0.
   await prisma.courier.update({
     where: { id: courierId },
     data: {
@@ -152,10 +141,23 @@ export async function updateCourier(
   return { ok: true };
 }
 
-export async function deleteCourier(formData: FormData) {
+export async function deleteCourierAction(_prev: CourierFormState, formData: FormData): Promise<CourierFormState> {
+  if (!(await assertAdmin())) return { error: "غير مصرّح." };
   const id = String(formData.get("id") ?? "");
-  if (!id) return;
-  await prisma.courier.delete({ where: { id } });
-  revalidatePath("/admin/couriers");
-  revalidatePath("/admin/orders/pending");
+  if (!id) return { error: "معرّف المندوب مفقود." };
+
+  try {
+    // التحقق من وجود طلبات مرتبطة قبل الحذف لتجنب الخطأ غير المتوقع
+    const linkedOrders = await prisma.order.count({ where: { assignedCourierId: id } });
+    if (linkedOrders > 0) {
+      return { error: `لا يمكن حذف هذا المندوب لوجود (${linkedOrders}) طلبات مرتبطة به. قم بإيقافه (Blocked) بدلاً من الحذف.` };
+    }
+
+    await prisma.courier.delete({ where: { id } });
+    revalidatePath("/admin/couriers");
+    return { ok: true };
+  } catch (e) {
+    console.error("deleteCourier", e);
+    return { error: "حدث خطأ أثناء الحذف. يرجى المحاولة لاحقاً." };
+  }
 }

@@ -20,6 +20,10 @@ import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
 import { adminCookieName, verifyAdminToken } from "@/lib/auth";
 import { ADMIN_MONEY_HARD_DELETE_CONFIRM_PHRASE } from "@/lib/mandoub-cash-constants";
+import {
+  createWalletPeerTransferFromCourier,
+  respondWalletPeerTransferByCourier,
+} from "../wallet-peer-transfer-actions";
 
 function safeMandoubReturn(next: string): string {
   if (!next.startsWith("/mandoub")) {
@@ -209,18 +213,13 @@ export async function submitMandoubDeliveryMoney(
   const submitMode = String(formData.get("mandoubMoneySubmitMode") ?? "").trim();
   const latRaw = formData.get("lat");
   const lngRaw = formData.get("lng");
-  const lat =
-    typeof latRaw === "string"
-      ? Number(latRaw)
-      : latRaw != null
-        ? Number(latRaw)
-        : NaN;
-  const lng =
-    typeof lngRaw === "string"
-      ? Number(lngRaw)
-      : lngRaw != null
-        ? Number(lngRaw)
-        : NaN;
+
+  // تحسين صارم: التحقق من أن القيم نصية وليست فارغة وليست صفراً
+  const latStr = typeof latRaw === "string" ? latRaw.trim() : "";
+  const lngStr = typeof lngRaw === "string" ? lngRaw.trim() : "";
+
+  const lat = latStr ? Number(latStr) : NaN;
+  const lng = lngStr ? Number(lngStr) : NaN;
 
   const v = verifyDelegatePortalQuery(c, exp, s);
   if (!v.ok) {
@@ -331,13 +330,14 @@ export async function submitMandoubDeliveryMoney(
     order.customerLocationUrl,
     undefined,
   );
+
+  // حماية حقيقية: التأكد من أن الإحداثيات ليست 0 وليست فارغة وليست NaN
   const coordsOk =
     Number.isFinite(lat) &&
     Number.isFinite(lng) &&
-    lat >= -90 &&
-    lat <= 90 &&
-    lng >= -180 &&
-    lng <= 180;
+    lat !== 0 &&
+    lng !== 0;
+
   const attachCourierGpsAsCustomer =
     !hadLocationBefore && coordsOk;
   const mapsUrl = attachCourierGpsAsCustomer
@@ -670,4 +670,34 @@ export async function hardDeleteOrderCourierMoneyEventAdmin(
     revalidatePath(nextPath.split("?")[0]);
   }
   return { ok: true, deletedEventId: eventId, deletedMode: "hard" };
+}
+
+export async function acceptIncomingWalletTransfer(
+  prev: MandoubCashState,
+  formData: FormData,
+): Promise<MandoubCashState> {
+  formData.set("accept", "1");
+  return respondWalletPeerTransferByCourier(prev, formData);
+}
+
+export async function rejectIncomingWalletTransfer(
+  prev: MandoubCashState,
+  formData: FormData,
+): Promise<MandoubCashState> {
+  formData.set("accept", "0");
+  return respondWalletPeerTransferByCourier(prev, formData);
+}
+
+export async function submitWalletTransferAction(
+  prev: MandoubCashState,
+  formData: FormData,
+): Promise<MandoubCashState> {
+  const toId = String(formData.get("toId") ?? "");
+  const toKind = String(formData.get("toKind") ?? "");
+  if (toKind === "courier") {
+    formData.set("toCourierId", toId);
+  } else if (toKind === "employee") {
+    formData.set("toEmployeeId", toId);
+  }
+  return createWalletPeerTransferFromCourier(prev, formData);
 }

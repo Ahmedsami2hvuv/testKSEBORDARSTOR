@@ -96,7 +96,7 @@ export function PreparerOrderTable({
       ) : null}
 
       {showBulkRow && (
-        <div className="mb-2">
+        <div className="mb-2 px-2 sm:px-4">
           <button
             type="button"
             onClick={() => setShowQuickSelect((v) => !v)}
@@ -149,7 +149,7 @@ export function PreparerOrderTable({
             <Link
               href={`${buildPreparerOrderDetailHref(auth, tab, qSearch, o.id)}#preparer-assign`}
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-600 text-[14px] font-black text-white shadow-sm transition hover:bg-emerald-700 active:scale-95"
             >
               ✓
             </Link>

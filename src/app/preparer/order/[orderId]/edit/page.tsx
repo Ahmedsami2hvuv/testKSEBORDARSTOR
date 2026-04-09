@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { verifyCompanyPreparerPortalQuery } from "@/lib/company-preparer-portal-link";
 import { dinarDecimalToAlfInputString } from "@/lib/money-alf";
 import { preparerPath } from "@/lib/preparer-portal-nav";
@@ -29,7 +30,14 @@ function invalidMsg(reason: string) {
 export default async function PreparerOrderEditPage({ params, searchParams }: Props) {
   const { orderId } = await params;
   const sp = await searchParams;
-  const v = verifyCompanyPreparerPortalQuery(sp.p, sp.exp, sp.s);
+  const cookieStore = await cookies();
+
+  // جلب بيانات التوثيق من الرابط أو الكوكيز
+  const p = sp.p || (await cookieStore).get("preparer_p")?.value;
+  const exp = sp.exp || (await cookieStore).get("preparer_exp")?.value;
+  const s = sp.s || (await cookieStore).get("preparer_s")?.value;
+
+  const v = verifyCompanyPreparerPortalQuery(p, exp, s);
 
   if (!v.ok) {
     return (
@@ -90,7 +98,7 @@ export default async function PreparerOrderEditPage({ params, searchParams }: Pr
     );
   }
 
-  const auth = { p: sp.p ?? "", exp: sp.exp ?? "", s: sp.s ?? "" };
+  const auth = { p: p!, exp: exp!, s: s! };
   const detailHref = preparerPath(`/preparer/order/${order.id}`, auth);
 
   return (
@@ -121,4 +129,3 @@ export default async function PreparerOrderEditPage({ params, searchParams }: Pr
     </div>
   );
 }
-

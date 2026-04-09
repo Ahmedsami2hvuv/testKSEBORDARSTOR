@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { logout } from "./actions";
 import { AdminLiveSearchInput } from "./live-search-input";
 import { adminSidebarTiles, tileHref } from "@/lib/admin-nav";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 
 function navItemActive(pathname: string, href: string): boolean {
   const base = href.split("#")[0] ?? href;
@@ -25,25 +26,8 @@ export function AdminShell({
   const pathname = usePathname() ?? "";
 
   useEffect(() => {
-    document.body.style.overflow = navOpen ? "hidden" : "";
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [navOpen]);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1024px)");
-    const close = () => {
-      if (mq.matches) setNavOpen(false);
-    };
-    mq.addEventListener("change", close);
-    return () => mq.removeEventListener("change", close);
-  }, []);
-
-  useEffect(() => {
-    const open = () => setNavOpen(true);
-    window.addEventListener("kse:open-admin-nav", open);
-    return () => window.removeEventListener("kse:open-admin-nav", open);
+    // We optionally closenavOpen on resize if needed, but since CSS handles lg breakpoint via lg:translate-x-0, we don't strictly need this unless we want to reset it.
+    // Keeping it simple!
   }, []);
 
   useEffect(() => {
@@ -61,78 +45,59 @@ export function AdminShell({
         if (typeof data.pendingCount === "number" && Number.isFinite(data.pendingCount)) {
           setPendingCount(Math.max(0, data.pendingCount));
         }
-      } catch {
-        // ignore transient network errors
-      }
+      } catch {}
     }
     void poll();
-    const id = window.setInterval(() => {
-      void poll();
-    }, POLL_MS);
+    const id = window.setInterval(() => void poll(), POLL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
   }, []);
 
-  const NavLinks = ({ onNavigate }: { onNavigate?: () => void }) => (
+  const NavLinks = () => (
     <>
       <Link
         href="/admin"
-        onClick={onNavigate}
+        title="الرئيسية"
+        onClick={() => setNavOpen(false)}
         className={
           navItemActive(pathname, "/admin")
-            ? "flex items-center gap-3 rounded-xl border border-sky-300 bg-sky-50 px-3 py-2.5 text-sm text-sky-950 shadow-sm"
-            : "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-700 transition hover:bg-emerald-50/80 hover:text-emerald-900"
+            ? `flex items-center gap-3 px-3 w-full h-12 rounded-xl bg-sky-100 dark:bg-[#002a3a] border border-sky-400 dark:border-[#00f3ff] text-sky-700 dark:text-[#00f3ff] shadow-sm dark:shadow-[0_0_15px_rgba(0,243,255,0.4)] transition-all`
+            : `flex items-center gap-3 px-3 w-full h-12 rounded-xl bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-all`
         }
       >
-        <span
-          className={
-            navItemActive(pathname, "/admin")
-              ? "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-400 bg-white text-lg shadow-sm"
-              : "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-200 bg-white text-lg"
-          }
-          aria-hidden
-        >
-          🏠
-        </span>
-        <span className="leading-snug font-medium">لوحة الرئيسية</span>
+        <span className="text-xl shrink-0" aria-hidden>🏠</span>
+        <span className="leading-snug font-medium text-sm block">الرئيسية</span>
       </Link>
-      <p className="mt-5 px-3 text-[11px] font-bold tracking-wider text-emerald-700/90">
-        الأقسام
-      </p>
-      <div className="mt-2 flex flex-col gap-1">
+      <p className="mt-5 px-3 text-[11px] font-bold tracking-wider text-sky-700 dark:text-[#00f3ff] block">الأقسام</p>
+      
+      <div className="mt-4 flex flex-col gap-3">
         {adminSidebarTiles().map((tile) => {
           const href = tileHref(tile);
           const active = navItemActive(pathname, href);
-          const isNewOrdersTab = tile.slug === "new-orders";
-          const showPendingBadge = isNewOrdersTab && pendingCount > 0;
+          const showPendingBadge = tile.slug === "new-orders" && pendingCount > 0;
           return (
             <Link
               key={tile.slug}
               href={href}
-              onClick={onNavigate}
+              title={tile.label}
+              onClick={() => setNavOpen(false)}
               className={
                 active
-                  ? "flex items-center gap-3 rounded-xl border border-sky-300 bg-sky-50 px-3 py-2.5 text-sm text-sky-950 shadow-sm"
-                  : "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-700 transition hover:bg-emerald-50/80 hover:text-emerald-900"
+                  ? `flex items-center gap-3 px-3 w-full h-12 rounded-xl bg-purple-100 dark:bg-[#1e102a] border border-purple-400 dark:border-[#e028ff] text-purple-700 dark:text-[#e028ff] shadow-sm dark:shadow-[0_0_15px_rgba(224,40,255,0.4)] transition-all relative`
+                  : `flex items-center gap-3 px-3 w-full h-12 rounded-xl bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-all relative`
               }
             >
-              <span
-                className={
-                  active
-                    ? "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-400 bg-white text-lg shadow-sm"
-                    : "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-200 bg-white text-lg"
-                }
-              >
+              <span className="text-xl shrink-0 relative flex justify-center items-center">
                 {tile.emoji}
                 {showPendingBadge ? (
-                  <span className="absolute -top-2 -right-2 inline-flex min-w-[1.2rem] items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow">
+                  <span className="absolute -top-2 -right-2 inline-flex min-w-[1.2rem] items-center justify-center rounded-full bg-orange-600 px-1 py-0.5 text-[10px] font-black leading-none text-white shadow-[0_0_10px_orange]">
                     {pendingCount > 99 ? "99+" : pendingCount}
                   </span>
                 ) : null}
               </span>
-              <span className="leading-snug font-medium">{tile.label}</span>
+              <span className="leading-snug font-medium text-sm text-slate-700 dark:text-slate-200 block">{tile.label}</span>
             </Link>
           );
         })}
@@ -141,77 +106,67 @@ export function AdminShell({
   );
 
   return (
-    <div className="kse-app-bg min-h-screen lg:flex">
+    <div className="kse-app-bg min-h-screen flex text-slate-900 dark:text-slate-100 flex-col lg:flex-row">
       <button
         type="button"
-        aria-expanded={navOpen}
-        aria-controls="admin-drawer"
         onClick={() => setNavOpen((o) => !o)}
-        className="fixed end-4 top-4 z-[110] flex h-12 w-12 items-center justify-center rounded-2xl border border-sky-300 bg-white text-sky-800 shadow-md lg:hidden"
+        className="fixed start-4 top-4 z-[110] flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-[#09090b] text-[#00f3ff] shadow-[0_0_10px_rgba(0,243,255,0.2)]"
       >
         <span className="sr-only">القائمة</span>
-        {navOpen ? (
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        ) : (
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        )}
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
       </button>
 
-      <button
-        type="button"
-        aria-hidden
-        tabIndex={-1}
-        className={`fixed inset-0 z-[90] bg-slate-900/30 backdrop-blur-[2px] transition-opacity duration-200 lg:hidden ${
-          navOpen ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-        onClick={() => setNavOpen(false)}
-      />
-
+      {/* Cyberpunk Compact Sidebar */}
       <aside
-        id="admin-drawer"
-        className={`fixed inset-y-0 start-0 z-[100] flex w-[min(19rem,90vw)] flex-col border-e border-sky-200 bg-gradient-to-b from-white via-sky-50/90 to-emerald-50/50 shadow-lg shadow-sky-200/40 backdrop-blur-sm transition-transform duration-200 ease-out lg:static lg:z-0 lg:w-[17.5rem] lg:shrink-0 lg:translate-x-0 ${
-          navOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"
+        className={`fixed inset-y-0 start-0 z-[120] flex flex-col border-e border-[rgba(0,0,0,0.05)] dark:border-[rgba(255,255,255,0.1)] bg-white/95 dark:bg-[#09090b]/95 shadow-[4px_0_20px_rgba(0,0,0,0.1)] dark:shadow-[4px_0_20px_rgba(0,0,0,0.8)] backdrop-blur-md transition-all duration-300 ease-out ${
+          navOpen ? "w-64 translate-x-0" : "w-64 translate-x-full"
         }`}
       >
-        <div className="border-b border-sky-200 bg-white/80 px-4 py-6">
-          <p className="bg-gradient-to-r from-sky-700 via-cyan-600 to-emerald-600 bg-clip-text text-lg font-extrabold tracking-tight text-transparent">
-            أبو الأكبر للتوصيل
-          </p>
-          <p className="mt-1 text-xs font-semibold text-emerald-800/90">لوحة الإدارة</p>
+        <div className="flex h-16 w-full items-center justify-between px-4 border-b border-[rgba(0,0,0,0.05)] dark:border-[rgba(255,255,255,0.1)]">
+          <button onClick={() => setNavOpen(false)} className="text-slate-500 dark:text-slate-400 p-2 text-xl font-black">✕</button>
+          <div className="flex w-8 h-8 rounded-full bg-gradient-to-br from-[#00f3ff] to-[#e028ff] items-center justify-center shadow-[0_0_10px_rgba(224,40,255,0.5)]">
+            <span className="text-black font-black text-xs">OR</span>
+          </div>
         </div>
-        <nav className="flex flex-1 flex-col overflow-y-auto px-2 py-4">
-          <NavLinks onNavigate={() => setNavOpen(false)} />
+        <nav className="flex flex-1 flex-col overflow-y-auto px-2 py-6 gap-2">
+          <NavLinks />
         </nav>
-        <div className="border-t border-sky-200 bg-white/70 p-3">
+        <div className="border-t border-[rgba(0,0,0,0.05)] dark:border-[rgba(255,255,255,0.1)] p-2">
           <form action={logout}>
             <button
               type="submit"
-              className="w-full rounded-xl px-3 py-3 text-start text-sm font-medium text-rose-600 transition hover:bg-rose-50"
+              title="خروج"
+              className="flex w-10 h-10 mx-auto items-center justify-center rounded-xl border border-[#ff3b30]/50 bg-transparent text-[#ff3b30] transition hover:bg-[#ff3b30]/20 shadow-[0_0_8px_rgba(255,59,48,0.2)]"
             >
-              خروج
+              ⏻
             </button>
           </form>
         </div>
       </aside>
 
-      <div className="kse-app-inner relative min-h-screen min-w-0 flex-1">
-        <main className="min-h-screen w-full px-1 pb-10 pt-[4.25rem] sm:px-3 lg:px-6 lg:pb-12 lg:pt-10">
-          <div className="mx-auto w-full max-w-6xl">
-            <div className="rounded-none border-0 bg-white/95 p-2 shadow-none ring-0 sm:rounded-xl sm:border sm:border-sky-100/80 sm:p-4 sm:shadow-sm lg:p-6">
-              <div className="mb-4">
-                <div className="flex flex-wrap gap-2">
-                  <AdminLiveSearchInput
-                    id="admin-super-search-header"
-                    ariaLabel="البحث"
-                    placeholder="ابحث بأي شيء: كسر، كيك، رقم طلب، تقرير، وارد، صادر، وجهتين..."
-                    className="min-w-[220px] flex-1 rounded-xl border border-sky-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
-                  />
-                </div>
+      <div className="kse-app-inner relative min-h-screen min-w-0 flex-1 flex flex-col">
+        {/* Sleek Top Bar matching Mockup */}
+         <header className="h-16 w-full bg-white/80 dark:bg-[#131418]/80 backdrop-blur-md border-b border-[rgba(0,0,0,0.05)] dark:border-[rgba(255,255,255,0.05)] px-4 sm:px-8 flex items-center justify-between z-40 relative">
+            <div className="absolute top-0 bottom-0 left-0 w-32 bg-gradient-to-r from-[rgba(0,243,255,0.1)] to-transparent pointer-events-none" />
+            <div className="flex items-center gap-4 w-full h-full justify-between ms-12">
+              <div className="flex items-center gap-3">
+                <ThemeSwitcher />
+                <AdminLiveSearchInput
+                   id="admin-super-search-header"
+                   ariaLabel="البحث"
+                   placeholder="ابحث بأي شيء: كسر، رقم طلب، وارد..."
+                   className="rounded-full border border-slate-300 dark:border-[rgba(255,255,255,0.1)] bg-slate-100 dark:bg-[#09090b] px-4 py-2 w-[240px] text-sm text-slate-900 dark:text-[#f8fafc] placeholder:text-slate-500 shadow-inner focus:border-sky-500 dark:focus:border-[#00f3ff] focus:ring-1 focus:ring-sky-500 dark:focus:ring-[#00f3ff] outline-none transition-all hidden md:block"
+                 />
               </div>
+            </div>
+         </header>
+
+        <main className="w-full flex-1 px-2 py-6 sm:p-6 lg:p-8 overflow-y-auto">
+          <div className="mx-auto w-full max-w-[1400px]">
+            {/* The inner children wrapper is totally transparent so dashboard grid displays natively */}
+            <div className="relative z-10 w-full h-full">
               {children}
             </div>
           </div>

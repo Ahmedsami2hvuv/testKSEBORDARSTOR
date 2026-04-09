@@ -1,14 +1,15 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { verifyCompanyPreparerPortalQuery } from "@/lib/company-preparer-portal-link";
 import { preparerCourierAssignWhere } from "@/lib/courier-assignable";
 import { ALF_PER_DINAR } from "@/lib/money-alf";
 import { preparerPath } from "@/lib/preparer-portal-nav";
-import type { PreparerPrepQuickFilter } from "@/lib/preparer-portal-order-table-data";
 import { loadPreparerPortalOrderTableData } from "@/lib/preparer-portal-order-table-data";
 import { prisma } from "@/lib/prisma";
 import { PreparerOrdersSection } from "../preparer-orders-client";
 import { PreparerSiteOrderDraftClient } from "./preparer-site-order-draft-client";
 import { whatsappMeUrl } from "@/lib/whatsapp";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,14 @@ function WhatsAppIcon({ className }: { className?: string }) {
 
 export default async function PreparerPreparationPage({ searchParams }: Props) {
   const sp = await searchParams;
-  const v = verifyCompanyPreparerPortalQuery(sp.p, sp.exp, sp.s);
+  const cookieStore = await cookies();
+
+  // جلب بيانات التوثيق من الرابط أو الكوكيز
+  const p = sp.p || (await cookieStore).get("preparer_p")?.value;
+  const exp = sp.exp || (await cookieStore).get("preparer_exp")?.value;
+  const s = sp.s || (await cookieStore).get("preparer_s")?.value;
+
+  const v = verifyCompanyPreparerPortalQuery(p, exp, s);
 
   if (!v.ok) return <div className="p-8 text-center font-bold">الرابط غير صالح.</div>;
 
@@ -37,7 +45,7 @@ export default async function PreparerPreparationPage({ searchParams }: Props) {
 
   if (!preparer) return <div className="p-8 text-center font-bold">الحساب غير متاح.</div>;
 
-  const auth = { p: sp.p ?? "", exp: sp.exp ?? "", s: sp.s ?? "" };
+  const auth = { p: p!, exp: exp!, s: s! };
   const homeHref = preparerPath("/preparer", auth);
   const shopIds = preparer.shopLinks.map((l) => l.shopId);
 
@@ -57,44 +65,41 @@ export default async function PreparerPreparationPage({ searchParams }: Props) {
 
   return (
     <div className="kse-app-inner mx-auto max-w-6xl px-3 py-4 pb-24 sm:px-4">
-      <div className="mb-4 flex flex-wrap gap-2">
-        <Link href={homeHref} className="inline-flex items-center justify-center rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-bold text-sky-900 shadow-sm transition hover:bg-sky-100">
-          ← الطلبات
-        </Link>
-        <Link href={preparerPath("/preparer/order/new", auth)} className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-900 shadow-sm transition hover:bg-emerald-100">
-          ➕ طلب يدوي
-        </Link>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex gap-2">
+            <Link href={homeHref} className="inline-flex items-center justify-center rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-bold text-sky-900 shadow-sm transition hover:bg-sky-100">
+            ← الطلبات
+            </Link>
+            <Link href={preparerPath("/preparer/order/new", auth)} className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-900 shadow-sm transition hover:bg-emerald-100">
+            ➕ طلب يدوي
+            </Link>
+        </div>
+        <ThemeSwitcher />
       </div>
 
       <section className="kse-glass-dark mb-4 rounded-2xl border border-violet-200/80 p-4 shadow-sm">
-        <h2 className="text-base font-black text-violet-950">خانة طلبات التجهيز</h2>
+        <h2 className="text-base font-black text-violet-950 dark:text-violet-400">خانة طلبات التجهيز</h2>
         {drafts.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-600">لا توجد مسودات حالياً.</p>
+          <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">لا توجد مسودات حالياً.</p>
         ) : (
           <div className="mt-3 space-y-2">
             {drafts.map((d) => (
-              <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-black text-slate-900">{d.titleLine || "—"}</p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <p className="text-xs text-slate-500 font-mono" dir="ltr">
-                      {(d.customerPhone || "—").trim()}
-                    </p>
-                    {d.customerPhone && (
-                      <a
-                        href={whatsappMeUrl(d.customerPhone)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm hover:bg-emerald-600"
-                        title="تواصل مع الزبون"
-                      >
-                        <WhatsAppIcon className="h-3.5 w-3.5" />
-                      </a>
-                    )}
+              <div key={d.id} className="relative group">
+                <Link
+                  href={preparerPath(`/preparer/preparation/draft/${d.id}`, auth)}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 hover:border-violet-300 hover:bg-violet-50/30 transition-all shadow-sm active:scale-[0.99] dark:bg-slate-900 dark:border-slate-800"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black text-slate-900 dark:text-slate-100">{d.titleLine || "—"}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="text-xs text-slate-500 font-mono" dir="ltr">
+                        {(d.customerPhone || "—").trim()}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <Link href={preparerPath(`/preparer/preparation/draft/${d.id}`, auth)} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-violet-700">
-                  فتح / تسعير
+                  <div className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-bold text-white shadow-sm group-hover:bg-violet-700">
+                    فتح / تسعير
+                  </div>
                 </Link>
               </div>
             ))}
@@ -106,9 +111,9 @@ export default async function PreparerPreparationPage({ searchParams }: Props) {
         <PreparerSiteOrderDraftClient auth={auth} preparerName={preparer.name} homeHref={homeHref} />
       </div>
 
-      <section className="kse-glass-dark mt-8 overflow-hidden border border-sky-200 shadow-sm">
-        <div className="p-3 border-b border-sky-100">
-           <h3 className="text-sm font-bold text-sky-900">الطلبات المرفوعة</h3>
+      <section className="kse-glass-dark mt-8 overflow-hidden border border-sky-200 shadow-sm dark:border-slate-800">
+        <div className="p-3 border-b border-sky-100 dark:border-slate-800">
+           <h3 className="text-sm font-bold text-sky-900 dark:text-sky-400">الطلبات المرفوعة</h3>
         </div>
         <PreparerOrdersSection allRows={orderTable.rows} searchFields={orderTable.searchFields} auth={auth} tab="all" initialQuery={sp.q || ""} couriersForBulkAssign={couriers} />
       </section>

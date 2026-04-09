@@ -8,6 +8,7 @@ import { ALF_PER_DINAR, formatDinarAsAlfWithUnit } from "@/lib/money-alf";
 import { ClientVoiceNoteField } from "@/app/client/order/client-voice-note-field";
 import { submitPreparerOrder, type PreparerActionState } from "./actions";
 import { preparerPath } from "@/lib/preparer-portal-nav";
+import { ShopSearchPicker } from "@/components/shop-search-picker";
 
 const inputClass =
   "w-full rounded-xl border border-sky-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200";
@@ -45,6 +46,7 @@ function ClientOrderFormInner({
   const orderPriceRef = useRef<HTMLInputElement>(null);
   const regionSearchRef = useRef<HTMLInputElement>(null);
 
+  // الحالة الافتراضية للمحل
   const [shopId, setShopId] = useState(shops[0]?.id ?? "");
   const shop = shops.find((s) => s.id === shopId) ?? shops[0];
 
@@ -163,6 +165,20 @@ function ClientOrderFormInner({
     return () => clearTimeout(t);
   }, [q]);
 
+  // غلق الصفحة تلقائياً بعد نجاح الإرسال بـ 3 ثواني
+  useEffect(() => {
+    if (state.ok) {
+      const t = setTimeout(() => {
+        try {
+          window.close();
+        } catch (e) {
+          console.error("Failed to close window:", e);
+        }
+      }, 3000);
+      return () => clearTimeout(t);
+    }
+  }, [state.ok]);
+
   useEffect(() => {
     const err = state.error?.trim();
     if (!err) return;
@@ -211,6 +227,7 @@ function ClientOrderFormInner({
             ✓
           </p>
           <h2 className="mt-3 text-xl font-bold text-emerald-800">تم رفع الطلب بنجاح</h2>
+          <p className="mt-2 text-sm text-slate-500 italic">سيتم غلق هذه الصفحة تلقائياً خلال ثوانٍ...</p>
           <div className="mt-5 flex flex-col gap-2">
             <button
               type="button"
@@ -260,22 +277,16 @@ function ClientOrderFormInner({
         <input type="hidden" name="exp" value={auth.exp} />
         <input type="hidden" name="s" value={auth.s} />
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">المحل *</span>
-          <select
-            name="shopId"
-            required
+        <section className="kse-glass-dark rounded-2xl border border-sky-200 p-5">
+          <ShopSearchPicker
+            label="المحل *"
+            shops={shops}
+            fieldName="shopId"
             value={shopId}
-            onChange={(e) => setShopId(e.target.value)}
-            className={inputClass}
-          >
-            {shops.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            onValueChange={(id) => setShopId(id)}
+            required
+          />
+        </section>
 
         <input type="hidden" name="customerRegionId" value={selected?.id ?? ""} />
 
@@ -793,4 +804,3 @@ export function PreparerClientOrderForm(props: Omit<PropsInner, "onResetForNewOr
     />
   );
 }
-

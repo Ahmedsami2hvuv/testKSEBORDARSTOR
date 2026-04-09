@@ -8,8 +8,19 @@ export function buildClientOrderPortalQuery(
   return new URLSearchParams({ e, exp, s: sig });
 }
 
-export function clientOrderFormPath(e: string, exp: string, sig: string): string {
-  return `/client/order?${buildClientOrderPortalQuery(e, exp, sig).toString()}`;
+export function clientOrderFormPath(
+  e: string,
+  exp: string,
+  sig: string,
+  phoneRaw?: string,
+): string {
+  const q = buildClientOrderPortalQuery(e, exp, sig);
+  const loc = normalizeIraqMobileLocal11(phoneRaw ?? "");
+  if (loc) {
+    q.set("phone", loc);
+    q.set("customerPhone", loc);
+  }
+  return `/client/order?${q.toString()}`;
 }
 
 export function clientOrderEditPath(
@@ -23,7 +34,6 @@ export function clientOrderEditPath(
   q.set("edit", String(orderNumber));
   const loc = normalizeIraqMobileLocal11(phoneRaw ?? "");
   if (loc) {
-    // توافق للأمام/للخلف: بعض الصفحات القديمة تقرأ phone وبعضها customerPhone
     q.set("phone", loc);
     q.set("customerPhone", loc);
   }
@@ -39,7 +49,6 @@ export function clientOrderHistoryPath(
   const q = buildClientOrderPortalQuery(e, exp, sig);
   const loc = normalizeIraqMobileLocal11(phoneRaw ?? "");
   if (loc) {
-    // توافق للأمام/للخلف: بعض الصفحات القديمة تقرأ phone وبعضها customerPhone
     q.set("phone", loc);
     q.set("customerPhone", loc);
   }

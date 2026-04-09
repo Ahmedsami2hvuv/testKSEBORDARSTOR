@@ -35,6 +35,10 @@ export type MandoubRow = {
   prepaidAll?: boolean;
   /** طلب عكسي — تنبيه: استلام من الزبون وتسليم للعميل */
   reversePickup?: boolean;
+  /** تنبيهات مالية */
+  wardMismatchType?: "excess" | "deficit" | null;
+  saderMismatchType?: "excess" | "deficit" | null;
+  createdAt?: Date | string;
 };
 
 function buildOrderDetailHref(
@@ -195,7 +199,7 @@ export function MandoubOrderTable({
               <button
                 type="button"
                 onClick={() => setSelectedIds(new Set())}
-                className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 sm:text-sm"
+                className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 sm:text-sm"
               >
                 إفراغ
               </button>

@@ -4,6 +4,8 @@ export type PreparerShoppingProductPayload = {
   line: string;
   buyAlf: number;
   sellAlf: number;
+  /** هل قامت الإدارة بتجهيز هذا المنتج بنفسها؟ (يُستثنى من حسابات المجهز) */
+  isAdminPrepared?: boolean;
 };
 
 export type PreparerShoppingPayloadV1 = {

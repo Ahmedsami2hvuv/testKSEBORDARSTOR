@@ -2,10 +2,18 @@
 
 export const ALF_PER_DINAR = 1000;
 
+/** تحويل الأرقام العربية/الهندية (١٢٣) إلى أرقام إنجليزية (123) لضمان صحة الحسابات البرمجية */
+export function normalizeNumerals(v: any): string {
+  const str = (v ?? "").toString();
+  return str.replace(/[٠-٩]/g, (d: string) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
+            .replace(/[0-9]/g, (d: string) => d);
+}
+
 function toNumber(v: unknown): number | null {
   if (v == null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  const n = parseFloat(String(v));
+  const normalized = normalizeNumerals(v).replace(/,/g, ".").trim();
+  const n = parseFloat(normalized);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -37,9 +45,9 @@ export function dinarDecimalToAlfInputString(v: unknown): string {
 
 /** تحويل ما يكتبه المستخدم (بالألف) إلى دينار (رقم) للتخزين */
 export function parseAlfInputToDinarNumber(raw: string): number | null {
-  const t = raw.replace(/,/g, ".").trim();
-  if (!t) return null;
-  const n = parseFloat(t);
+  const normalized = normalizeNumerals(raw).replace(/,/g, ".").trim();
+  if (!normalized) return null;
+  const n = parseFloat(normalized);
   if (!Number.isFinite(n) || n < 0) return null;
   return n * ALF_PER_DINAR;
 }
@@ -56,9 +64,9 @@ export function parseAlfInputToDinarDecimalRequired(
 export function parseOptionalAlfInputToDinar(
   raw: string,
 ): { ok: true; value: number | null } | { ok: false } {
-  const t = raw.replace(/,/g, ".").trim();
-  if (!t) return { ok: true, value: null };
-  const n = parseFloat(t);
+  const normalized = normalizeNumerals(raw).replace(/,/g, ".").trim();
+  if (!normalized) return { ok: true, value: null };
+  const n = parseFloat(normalized);
   if (!Number.isFinite(n) || n < 0) return { ok: false };
   return { ok: true, value: n * ALF_PER_DINAR };
 }

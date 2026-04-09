@@ -1,12 +1,37 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  /* خلفية أساسية بلمسة سمائية — ليست بيضاء ناصعة */
-  --background: #e8f2fa;
-  --foreground: #0f172a;
-  --surface: #f0f9ff;
-  --surface-muted: #f4f9fc;
-  --accent-sky: #0ea5e9;
+  /* Bright Light Base (Default) */
+  --background: #f0f4f8; 
+  --foreground: #0f172a; 
+  --surface: #ffffff;
+  --surface-muted: rgba(255, 255, 255, 0.7);
+  
+  /* Fallback accents for light mode */
+  --neon-cyan: #0284c7;
+  --neon-purple: #9333ea;
+  --neon-orange: #ea580c;
+  
+  --accent-sky: #0284c7;
+  --accent-emerald: #10b981;
+  --accent-cyan: #06b6d4;
+}
+
+.dark {
+  /* Carbon Black Base */
+  --background: #09090b; 
+  --foreground: #f8fafc; 
+  --surface: #131418;
+  --surface-muted: rgba(19, 20, 24, 0.7);
+  
+  /* Vibrant Neons from Mockup */
+  --neon-cyan: #00f3ff;
+  --neon-purple: #e028ff;
+  --neon-orange: #ff9100;
+  
+  --accent-sky: #00f3ff;
   --accent-emerald: #10b981;
   --accent-cyan: #06b6d4;
 }
@@ -20,57 +45,51 @@
 body {
   background: var(--background);
   color: var(--foreground);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /**
- * خلفية فاتحة: تدرج سمائي/مائي — بدون أبيض ناصع
+ * Standard Light Background
  */
 .kse-app-bg {
   position: relative;
   min-height: 100vh;
   isolation: isolate;
-  background: linear-gradient(
-    165deg,
-    #ddeaf6 0%,
-    #e0f2fe 24%,
-    #e8f7f2 52%,
-    #dff4f8 76%,
-    #e2eef8 100%
-  );
+  background-color: var(--background);
+  background-image: 
+    linear-gradient(rgba(2, 132, 199, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(2, 132, 199, 0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
-.kse-app-bg::before {
+/* Dark Mode Carbon / Cyberpunk Texture Pattern */
+.dark .kse-app-bg {
+  background-color: var(--background);
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+}
+
+.dark .kse-app-bg::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background:
-    radial-gradient(
-      ellipse 85% 55% at 100% 0%,
-      rgba(14, 165, 233, 0.18),
-      transparent 52%
-    ),
-    radial-gradient(
-      ellipse 65% 48% at 0% 100%,
-      rgba(16, 185, 129, 0.12),
-      transparent 52%
-    ),
-    radial-gradient(
-      ellipse 55% 42% at 50% 100%,
-      rgba(6, 182, 212, 0.12),
-      transparent 48%
-    );
+  background: 
+    radial-gradient(circle at 15% 50%, rgba(0, 243, 255, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 85% 30%, rgba(224, 40, 255, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 50% 100%, rgba(255, 145, 0, 0.05) 0%, transparent 50%);
 }
 
-.kse-app-bg::after {
+.dark .kse-app-bg::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.055;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.04;
 }
 
 .kse-app-inner {
@@ -78,97 +97,166 @@ body {
   z-index: 1;
 }
 
-/** بطاقة مرتفعة — سطح أزرق ثلجي وليس أبيض ناصع */
+/**
+ * Glass Profile
+ */
 .kse-glass-card {
   border-radius: 1rem;
-  border: 1px solid rgb(186 230 253);
-  background: linear-gradient(
-    165deg,
-    var(--surface) 0%,
-    var(--surface-muted) 100%
-  );
-  box-shadow:
-    0 4px 6px -1px rgb(14 116 144 / 0.08),
-    0 12px 32px -8px rgb(14 165 233 / 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.85); 
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
 }
 
-/** لوح محتوى فاتح (اسم الكلاس قديم لكن المظهر فاتح) */
+.dark .kse-glass-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(19, 20, 24, 0.85); 
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
 .kse-glass-dark {
-  border-radius: 1rem;
-  border: 1px solid rgb(165 243 252);
-  background: rgba(240, 249, 255, 0.94);
-  box-shadow:
-    0 1px 3px rgb(14 116 144 / 0.06),
-    0 8px 24px -4px rgb(14 165 233 / 0.08);
+  border-radius: 0.75rem;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
+  transition: all 0.3s ease;
+}
+
+.dark .kse-glass-dark {
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(9, 9, 11, 0.9);
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
 }
 
 /**
- * شريط تكبير الأزرار العائمة — مسار ومقبض أوضح للفأرة (الحاسوب)
+ * Dashboard Bento Grid Cards
  */
-.fab-scale-range {
-  -webkit-appearance: none;
-  appearance: none;
-  background: transparent;
+.neon-box {
+  border-radius: 0.75rem;
+  background: linear-gradient(135deg, rgba(255,255,255, 1) 0%, rgba(248, 250, 252, 1) 100%);
+  border: 2px solid;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s ease;
 }
 
-.fab-scale-range::-webkit-slider-runnable-track {
-  height: 10px;
+.dark .neon-box {
+  background: linear-gradient(135deg, rgba(30, 40, 50, 0.9) 0%, rgba(10, 15, 20, 0.95) 100%);
+}
+
+.neon-box-cyan {
+  border-color: var(--neon-cyan);
+  box-shadow: inset 0 0 10px rgba(2, 132, 199, 0.1), 0 4px 10px rgba(2, 132, 199, 0.1);
+}
+.dark .neon-box-cyan {
+  box-shadow: inset 0 0 15px rgba(0, 243, 255, 0.2), 0 4px 20px rgba(0, 243, 255, 0.15);
+}
+
+.neon-box-purple {
+  border-color: var(--neon-purple);
+  box-shadow: inset 0 0 10px rgba(147, 51, 234, 0.1), 0 4px 10px rgba(147, 51, 234, 0.1);
+}
+.dark .neon-box-purple {
+  box-shadow: inset 0 0 15px rgba(224, 40, 255, 0.2), 0 4px 20px rgba(224, 40, 255, 0.15);
+}
+
+.neon-box-orange {
+  border-color: var(--neon-orange);
+  box-shadow: inset 0 0 10px rgba(234, 88, 12, 0.1), 0 4px 10px rgba(234, 88, 12, 0.1);
+}
+.dark .neon-box-orange {
+  box-shadow: inset 0 0 15px rgba(255, 145, 0, 0.2), 0 4px 20px rgba(255, 145, 0, 0.15);
+}
+
+/** Pill Layout on Right Side */
+.neon-pill {
   border-radius: 9999px;
-  background: linear-gradient(to left, rgb(224 242 254), rgb(186 230 253));
-  border: 1px solid rgb(125 211 252);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;
+  transition: all 0.3s ease;
+  position: relative;
+}
+.dark .neon-pill {
+  background: rgba(19, 20, 24, 0.9);
+  border: 1px solid rgba(255,255,255,0.2);
 }
 
-.fab-scale-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 22px;
-  height: 22px;
-  margin-top: -7px;
-  border-radius: 9999px;
-  background: rgb(2 132 199);
-  border: 3px solid white;
-  box-shadow: 0 2px 10px rgb(15 23 42 / 0.22);
-  cursor: grab;
+.neon-pill-cyan { border-color: rgba(2, 132, 199, 0.5); }
+.dark .neon-pill-cyan { border-color: rgba(0, 243, 255, 0.5); }
+
+.neon-pill-purple { border-color: rgba(147, 51, 234, 0.5); }
+.dark .neon-pill-purple { border-color: rgba(224, 40, 255, 0.5); }
+
+.neon-pill-orange { border-color: rgba(234, 88, 12, 0.5); }
+.dark .neon-pill-orange { border-color: rgba(255, 145, 0, 0.5); }
+
+
+/** Connection Lines for mockups */
+.neon-curved-line {
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  border-top: 2px solid rgba(2, 132, 199, 0.4);
+  border-right: 2px solid rgba(2, 132, 199, 0.4);
+  border-top-right-radius: 20px;
+  z-index: 0;
+}
+.dark .neon-curved-line {
+  border-top: 2px solid rgba(0, 243, 255, 0.4);
+  border-right: 2px solid rgba(0, 243, 255, 0.4);
 }
 
-.fab-scale-range:active::-webkit-slider-thumb {
-  cursor: grabbing;
+/** 
+ * ==========================================
+ * FORCE DARK MODE OVERRIDES FOR LEGACY COMPONENTS
+ * ==========================================
+ * Only active when `.dark` is present on html
+ */
+.dark body input, .dark body select, .dark body textarea {
+  color: #fff !important;
+  background: rgba(255,255,255,0.05) !important;
+  border-color: rgba(255,255,255,0.2) !important;
+}
+.dark body input:focus, .dark body select:focus, .dark body textarea:focus {
+  border-color: var(--neon-cyan) !important;
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.2) !important;
 }
 
-.fab-scale-range::-moz-range-track {
-  height: 10px;
-  border-radius: 9999px;
-  background: linear-gradient(to right, rgb(224 242 254), rgb(186 230 253));
-  border: 1px solid rgb(125 211 252);
+.dark body .bg-white { 
+  background-color: rgba(15, 17, 21, 0.9) !important; 
+}
+.dark body .bg-slate-50, .dark body .bg-sky-50, .dark body .bg-emerald-50, .dark body .bg-rose-50 { 
+  background-color: rgba(22, 24, 30, 0.9) !important; 
+}
+.dark body .bg-slate-100, .dark body .bg-sky-100, .dark body .bg-emerald-100 { 
+  background-color: rgba(30, 32, 40, 0.8) !important; 
 }
 
-.fab-scale-range::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  border-radius: 9999px;
-  background: rgb(2 132 199);
-  border: 3px solid white;
-  box-shadow: 0 2px 10px rgb(15 23 42 / 0.22);
-  cursor: grab;
+/* Invert dark text colors to light text for dark mode */
+.dark body .text-slate-800, .dark body .text-slate-900, .dark body .text-slate-700, 
+.dark body .text-sky-950, .dark body .text-emerald-800, .dark body .text-emerald-900,
+.dark body .text-gray-800, .dark body .text-gray-900 { 
+  color: #eef2f6 !important; 
+}
+.dark body .text-slate-600, .dark body .text-slate-500 { 
+  color: #94a3b8 !important; 
 }
 
-@media (min-width: 768px) {
-  .fab-scale-range::-webkit-slider-runnable-track {
-    height: 12px;
-  }
-
-  .fab-scale-range::-webkit-slider-thumb {
-    width: 26px;
-    height: 26px;
-    margin-top: -8px;
-  }
-
-  .fab-scale-range::-moz-range-track {
-    height: 12px;
-  }
-
-  .fab-scale-range::-moz-range-thumb {
-    width: 24px;
-    height: 24px;
-  }
+/* Fix harsh light borders */
+.dark body .border-slate-200, .dark body .border-slate-100, .dark body .border-slate-300,
+.dark body .border-sky-300, .dark body .border-sky-200, .dark body .border-sky-100, .dark body .border-emerald-200,
+.dark body .border-slate-400 { 
+  border-color: rgba(255, 255, 255, 0.1) !important; 
 }
+
+/* Strip harsh shadows */
+.dark body .shadow-sm, .dark body .shadow-md, .dark body .shadow-lg, .dark body .shadow {
+  box-shadow: 0 5px 25px rgba(0, 0, 0, 0.4) !important;
+}
+

@@ -8,7 +8,10 @@ export type InvoiceProductLine = {
 };
 
 function fmtAlf(n: number): string {
-  return formatDinarAsAlf(n * ALF_PER_DINAR);
+  // استخدام التنسيق المطلوب (أرقام فقط أو مع كسر بسيط بدون كلمة ألف إذا كان ممكناً، لكن المعتمد حالياً هو formatDinarAsAlf)
+  // لتلبية طلب المستخدم "مثروم نص ك 9" سنقوم بإرجاع الرقم فقط إذا كان صحيحاً
+  if (Number.isInteger(n)) return String(n);
+  return String(n);
 }
 
 /** فاتورة الزبون (بيع + تراكمي) + تجهيز + توصيل — بصيغة قريبة من بوت Telegram */
@@ -31,45 +34,42 @@ export function buildCustomerInvoiceText(params: {
   parts.push(`🏠: ${regionTitle}`);
   parts.push(`📞: ${phone}`);
   parts.push("");
-  parts.push("🛍 ال🛍:");
+  parts.push("🛍 المنتجات:");
   parts.push("");
 
   let run = 0;
   for (const row of lines) {
     const s = row.sellAlf;
-    parts.push(`– ${row.line} بـ${fmtAlf(s)}`);
+    parts.push(`– ${row.line} بـ ${s}`);
     run += s;
-    parts.push(`• ${fmtAlf(run)} 💵`);
+    parts.push(`• ${run} 💵`);
   }
 
-  parts.push(`– 📦 التجهيز: من ${placesCount} محلات بـ ${fmtAlf(extraAlf)}`);
+  parts.push(`– 📦 التجهيز: من ${placesCount} محلات بـ ${extraAlf}`);
   run += extraAlf;
-  parts.push(`• ${fmtAlf(run)} 💵`);
+  parts.push(`• ${run} 💵`);
 
   const withoutDelivery = run;
 
-  parts.push(`– 🚚: بـ ${fmtAlf(deliveryAlf)}`);
+  parts.push(`– 🚚: بـ ${deliveryAlf}`);
   run += deliveryAlf;
-  parts.push(`• ${fmtAlf(run)} 💵`);
+  parts.push(`• ${run} 💵`);
 
   parts.push("-----------------------------------");
   parts.push("✨ المجموع الكلي: ✨");
-  parts.push(`بدون التوصيل = ${fmtAlf(withoutDelivery)} 💵`);
-  parts.push(`مــــع التوصيل = ${fmtAlf(run)} 💵`);
+  parts.push(`بدون التوصيل = ${withoutDelivery} 💵`);
+  parts.push(`مــــع التوصيل = ${run} 💵`);
   parts.push("شكراً لاختياركم أبو الأكبر للتوصيل! ❤️");
 
   return parts.join("\n");
 }
 
-/** سطر لكل منتج في خانة ملاحظات الطلب: الاسم — السعر بالألف فقط (بدون كلمة بيع). */
+/** سطر لكل منتج في خانة ملاحظات الطلب: الاسم والسعر فقط. */
 export function buildShoppingOrderProductNotesLines(lines: InvoiceProductLine[]): string {
-  return lines.map((r) => `${r.line.trim()} — ${fmtAlf(r.sellAlf)}`).join("\n");
+  return lines.map((r) => `${r.line.trim()}  ${r.sellAlf}`).join("\n");
 }
 
-/** ملخص شراء للمجهز (للحقول الداخلية) */
+/** ملخص شراء للمجهز (للحقول الداخلية) - تم التعديل لإخفاء سعر الشراء عن المندوب في الملخص العام */
 export function buildPreparerPurchaseSummaryText(lines: InvoiceProductLine[]): string {
-  const rows = lines.map((r) => `• ${r.line}: شراء ${fmtAlf(r.buyAlf)} | بيع ${fmtAlf(r.sellAlf)}`);
-  const totalBuy = lines.reduce((s, r) => s + r.buyAlf, 0);
-  rows.push(`مجموع الشراء (تقديري): ${fmtAlf(totalBuy)}`);
-  return ["══ تفاصيل المجهز (شراء / بيع) ══", ...rows].join("\n");
+  return lines.map((r) => `• ${r.line.trim()}  ${r.sellAlf}`).join("\n");
 }

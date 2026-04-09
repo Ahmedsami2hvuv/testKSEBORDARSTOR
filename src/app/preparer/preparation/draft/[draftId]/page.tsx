@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { verifyCompanyPreparerPortalQuery } from "@/lib/company-preparer-portal-link";
 import { preparerPath } from "@/lib/preparer-portal-nav";
 import { prisma } from "@/lib/prisma";
@@ -14,17 +15,25 @@ type Props = {
 export default async function PreparerShoppingDraftPage({ params, searchParams }: Props) {
   const { draftId } = await params;
   const sp = await searchParams;
-  const v = verifyCompanyPreparerPortalQuery(sp.p, sp.exp, sp.s);
+  const cookieStore = await cookies();
+
+  // جلب بيانات التوثيق من الرابط أو الكوكيز
+  const p = sp.p || (await cookieStore).get("preparer_p")?.value;
+  const exp = sp.exp || (await cookieStore).get("preparer_exp")?.value;
+  const s = sp.s || (await cookieStore).get("preparer_s")?.value;
+
+  const v = verifyCompanyPreparerPortalQuery(p, exp, s);
 
   if (!v.ok) {
     return (
       <div className="kse-app-inner mx-auto max-w-md px-4 py-16">
         <p className="text-center font-bold text-rose-700">الرابط غير صالح</p>
+        <p className="mt-2 text-center text-xs text-slate-500">يرجى العودة للرابط الأصلي.</p>
       </div>
     );
   }
 
-  const auth = { p: sp.p ?? "", exp: sp.exp ?? "", s: sp.s ?? "" };
+  const auth = { p: p!, exp: exp!, s: s! };
   const prepHref = preparerPath("/preparer/preparation", auth);
 
   const preparer = await prisma.companyPreparer.findFirst({

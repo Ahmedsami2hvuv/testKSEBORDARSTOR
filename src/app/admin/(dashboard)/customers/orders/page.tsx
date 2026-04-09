@@ -97,7 +97,7 @@ export default async function CustomerPhoneOrdersPage({ searchParams }: Props) {
               shopName: o.shop.name,
               status: o.status,
               missingLoc,
-              totalLabel: o.totalAmount != null ? formatDinarAsAlf(o.totalAmount) : "—",
+              totalLabel: o.orderSubtotal != null ? formatDinarAsAlf(o.orderSubtotal) : "—",
               courierName: o.courier?.name?.trim() || "",
             };
           })}

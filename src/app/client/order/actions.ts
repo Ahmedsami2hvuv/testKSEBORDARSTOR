@@ -30,6 +30,14 @@ function formatCustomerSummaryNote(raw: string): string {
   return raw.trim();
 }
 
+/** اسم الدالة submitOrder مطلوب ليتطابق مع الاستدعاء في الكلاينت */
+export async function submitOrder(
+  _prev: ClientOrderState,
+  formData: FormData,
+): Promise<ClientOrderState> {
+  return submitClientOrder(_prev, formData);
+}
+
 export async function submitClientOrder(
   _prev: ClientOrderState,
   formData: FormData,
@@ -40,7 +48,7 @@ export async function submitClientOrder(
   const v = verifyEmployeeOrderPortalQuery(e, exp, sig);
   if (!v.ok) {
     return {
-      error: "الرابط غير صالح أو منتهٍ. اطلب رابطاً جديداً من موظف المحل.",
+      error: "الرابط غير صاالح أو منتهٍ. اطلب رابطاً جديداً من موظف المحل.",
     };
   }
 
@@ -61,6 +69,7 @@ export async function submitClientOrder(
   const isEditMode = Number.isInteger(editOrderNumber) && editOrderNumber > 0;
 
   const imageFile = formData.get("orderImage");
+  const doorPhotoFile = formData.get("customerDoorPhoto");
   const voiceFile = formData.get("voiceNote");
 
   if (!orderType) {
@@ -117,6 +126,15 @@ export async function submitClientOrder(
     }
   }
 
+  let doorPhotoUrl: string | null = null;
+  if (doorPhotoFile instanceof File && doorPhotoFile.size > 0) {
+    try {
+      doorPhotoUrl = await saveCustomerDoorPhotoUploaded(doorPhotoFile, MAX_ORDER_IMAGE_BYTES);
+    } catch (e) {
+      console.error("Failed to save door photo:", e);
+    }
+  }
+
   let voiceNoteUrl: string | null = null;
   if (voiceFile instanceof File && voiceFile.size > 0) {
     try {
@@ -163,7 +181,6 @@ export async function submitClientOrder(
   const delivery = shopDel.greaterThan(custDel) ? shopDel : custDel;
   const total = subtotal.plus(delivery);
 
-  /** دمج مع سجل الزبون لنفس المحل والرقم — لوكيشن، دالة، الرقم الثاني، صورة الباب */
   const existingCustomer = await prisma.customer.findFirst({
     where: { shopId: shop.id, phone: phoneLocal },
   });
@@ -174,10 +191,6 @@ export async function submitClientOrder(
     },
   });
 
-  /**
-   * اقتراح/حفظ بيانات الزبون للطلبات القادمة يجب أن يكون حصراً لـ (رقم + منطقة)
-   * عبر `CustomerPhoneProfile`، حتى لو وُجدت بيانات في `Customer` أو “آخر طلب”.
-   */
   const locMerged =
     customerLocationUrl.trim() ||
     phoneRegionProfile?.locationUrl?.trim() ||
@@ -193,7 +206,7 @@ export async function submitClientOrder(
     if (!altLocal) {
       return {
         error:
-          "الرقم الثاني غير صالح. أدخل رقماً عراقياً صحيحاً أو اترك الحقل فارغاً.",
+          "الرقام الثاني غير صالح. أدخل رقماً عراقياً صحيحاً أو اترك الحقل فارغاً.",
       };
     }
     if (altLocal === phoneLocal) {
@@ -206,8 +219,6 @@ export async function submitClientOrder(
 
   const customerDoorPrefill = phoneRegionProfile?.photoUrl?.trim() || null;
 
-  /** جدول `Customer` مرتبط بالمحل والرقم فقط — لا نخزّن لوكيشن/دالة/رقم ثانٍ/صورة باب هنا
-   *  حتى لا تختلط بيانات مناطق مختلفة؛ المصدر هو `CustomerPhoneProfile` + حقول الطلب. */
   const customerRow = existingCustomer
     ? await prisma.customer.update({
         where: { id: existingCustomer.id },
@@ -236,13 +247,7 @@ export async function submitClientOrder(
         },
       });
 
-  /** وقت الطلب كما أدخله الزبون — بدون بادئة (لا تُعرض في تيليجرام) */
   const orderNoteTimeOnly = orderTime.trim();
-
-  /**
-   * حقل الملاحظة في الطلب: ما كتبه الزبون في خانة الملاحظات فقط،
-   * فارغ إن لم يكتب؛ وإن كتب يُحاط النص برموز لتسهيل تمييزه.
-   */
   const summaryFromCustomerNotes = formatCustomerSummaryNote(notes);
 
   const orderImageUploaderName = imageUrl
@@ -264,6 +269,7 @@ export async function submitClientOrder(
         imageUrl: true,
         orderImageUploadedByName: true,
         voiceNoteUrl: true,
+        customerDoorPhotoUrl: true,
       },
     });
     if (!existingOrder) {
@@ -292,7 +298,7 @@ export async function submitClientOrder(
           imageUrl != null ? orderImageUploaderName : existingOrder.orderImageUploadedByName,
         voiceNoteUrl: voiceNoteUrl ?? existingOrder.voiceNoteUrl,
         shopDoorPhotoUrl: shop.photoUrl?.trim() || null,
-        customerDoorPhotoUrl: customerDoorPrefill,
+        customerDoorPhotoUrl: doorPhotoUrl ?? existingOrder.customerDoorPhotoUrl ?? customerDoorPrefill,
         submissionSource: "customer_via_employee_link",
         submittedByEmployeeId: submitter.id,
         submittedByCompanyPreparerId: null,
@@ -321,7 +327,7 @@ export async function submitClientOrder(
         orderImageUploadedByName: orderImageUploaderName,
         voiceNoteUrl,
         shopDoorPhotoUrl: shop.photoUrl?.trim() || null,
-        customerDoorPhotoUrl: customerDoorPrefill,
+        customerDoorPhotoUrl: doorPhotoUrl ?? customerDoorPrefill,
         submissionSource: "customer_via_employee_link",
         submittedByEmployeeId: submitter.id,
         submittedByCompanyPreparerId: null,
@@ -336,7 +342,7 @@ export async function submitClientOrder(
     regionId: custRegion.id,
     locationUrl: locMerged,
     landmark: lmMerged,
-    doorPhotoUrl: customerDoorPrefill ?? "",
+    doorPhotoUrl: doorPhotoUrl ?? customerDoorPrefill ?? "",
     alternatePhone: alternateMerged,
   });
 

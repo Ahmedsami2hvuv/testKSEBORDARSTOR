@@ -43,6 +43,7 @@ export async function bulkUpdateOrdersStatus(
     targetStatus === "assigned" ||
     targetStatus === "delivering" ||
     targetStatus === "delivered";
+
   if (needsCourier && !courierId) {
     return { error: "اختر المندوب ثم اضغط تطبيق." };
   }
@@ -55,26 +56,29 @@ export async function bulkUpdateOrdersStatus(
     }
   }
 
-  const assignedCourierId = needsCourier ? courierId : null;
+  // عند الأرشفة: لا نمسح المندوب الحالي لكي يبقى مسجلاً مع الطلبية في الأرشيف
+  const data: any = {
+    status: targetStatus,
+    ...(targetStatus === "archived"
+      ? { archivedAt: new Date() }
+      : {
+          archivedAt: null,
+          assignedCourierId: needsCourier ? courierId : null
+        }),
+  };
 
   await prisma.order.updateMany({
     where: { id: { in: orderIds } },
-    data: {
-      status: targetStatus,
-      assignedCourierId,
-      ...(targetStatus === "archived"
-        ? { archivedAt: new Date() }
-        : { archivedAt: null }),
-    },
+    data,
   });
 
-  if (targetStatus === "assigned" && assignedCourierId) {
+  if (targetStatus === "assigned" && courierId) {
     const updatedOrders = await prisma.order.findMany({
       where: { id: { in: orderIds } },
       select: { orderNumber: true }
     });
     for (const o of updatedOrders) {
-      void pushNotifyCourierNewAssignment(assignedCourierId, o.orderNumber);
+      void pushNotifyCourierNewAssignment(courierId, o.orderNumber);
     }
   }
 

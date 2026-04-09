@@ -33,6 +33,7 @@ import {
   MandoubWalletClient,
   type MandoubWalletLedgerLine,
 } from "../mandoub-wallet-client";
+import { getUISettings } from "@/lib/ui-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +61,6 @@ export default async function MandoubWalletPage({ searchParams }: Props) {
   const sp = await searchParams;
   const cookieStore = await cookies();
 
-  // جلب الهوية من الرابط أو الكوكيز
   const c = sp.c || cookieStore.get("mandoub_c")?.value;
   const s = sp.s || cookieStore.get("mandoub_s")?.value;
   const exp = sp.exp || cookieStore.get("mandoub_exp")?.value;
@@ -85,7 +85,7 @@ export default async function MandoubWalletPage({ searchParams }: Props) {
       <div dir="rtl" lang="ar" className="kse-app-bg px-4 py-16 text-slate-800">
         <div className="kse-app-inner mx-auto max-w-md">
           <div className="kse-glass-dark rounded-2xl border border-rose-300 p-8 text-center">
-            <p className="text-lg font-bold text-rose-800">الحساب محظور</p>
+            <p className="text-lg font-bold text-rose-700">الحساب محظور</p>
           </div>
         </div>
       </div>
@@ -164,6 +164,7 @@ export default async function MandoubWalletPage({ searchParams }: Props) {
   const rawMisc = await prisma.courierWalletMiscEntry.findMany({
     where: {
       courierId: courier.id,
+      deletedAt: null
     },
     orderBy: { createdAt: "desc" },
   });
@@ -171,7 +172,8 @@ export default async function MandoubWalletPage({ searchParams }: Props) {
   const orderLines: MandoubWalletLedgerLine[] = [];
   for (const o of ordersNorm) {
     for (const ev of o.moneyEvents) {
-      if (ev.courierId !== courier.id) continue;
+      if (ev.courierId !== courier.id || ev.recordedByCompanyPreparerId != null) continue;
+
       orderLines.push({
         source: "order",
         id: ev.id,
@@ -227,7 +229,6 @@ export default async function MandoubWalletPage({ searchParams }: Props) {
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
-    // جلب المجهزين الفعليين (CompanyPreparer) فقط
     prisma.companyPreparer.findMany({
       where: { active: true, walletEmployeeId: { not: null } },
       select: {
@@ -244,6 +245,8 @@ export default async function MandoubWalletPage({ searchParams }: Props) {
   const carryOver = courier.mandoubWalletCarryOverDinar ?? new Decimal(0);
   const walletRemain = moneySums.remainingNet.plus(carryOver);
   const handToAdmin = adminTotalAllTime;
+
+  const cashInHand = handToAdmin.plus(sumEarnings);
 
   const pendingIncomingForUi = await Promise.all(
     pendingTransferRows
@@ -344,6 +347,30 @@ export default async function MandoubWalletPage({ searchParams }: Props) {
 
   const ledger = filterLedgerByRecentDays(ledgerFiltered);
 
+  // --- حساب الإكراميات من جدول MiscEntry باستخدام الوسم [إكرامية] ---
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  let tipDailySum = new Decimal(0);
+  let tipMonthlySum = new Decimal(0);
+
+  for (const m of rawMisc) {
+    if (m.label.includes("[إكرامية]")) {
+      if (!totalsBaseline || m.createdAt > totalsBaseline) {
+        tipDailySum = tipDailySum.plus(m.amountDinar);
+      }
+      if (m.createdAt >= startOfMonth) {
+        tipMonthlySum = tipMonthlySum.plus(m.amountDinar);
+      }
+    }
+  }
+
+  const tipDailyStrFormatted = formatDinarAsAlfWithUnit(tipDailySum);
+  const tipMonthlyStrFormatted = formatDinarAsAlfWithUnit(tipMonthlySum);
+
+  // جلب إعدادات المحفظة
+  const uiSettings = await getUISettings("mandoub", "wallet_block");
+
   return (
     <div dir="rtl" lang="ar" className="kse-app-bg min-h-screen text-base leading-relaxed text-slate-800">
       <div className="kse-app-inner mx-auto max-w-3xl px-3 py-4 pb-24 sm:px-4">
@@ -377,21 +404,24 @@ export default async function MandoubWalletPage({ searchParams }: Props) {
           sumEarningsStr={formatDinarAsAlfWithUnit(sumEarnings)}
           walletRemainStr={formatDinarAsAlfWithUnit(walletRemain)}
           handToAdminStr={formatDinarAsAlfWithUnit(handToAdmin)}
+          cashInHandStr={formatDinarAsAlfWithUnit(cashInHand)}
+          tipDailyStr={tipDailyStrFormatted}
+          tipMonthlyStr={tipMonthlyStrFormatted}
           ledger={ledger}
           pendingIncoming={pendingIncomingForUi}
           transferTargetCouriers={transferTargetCouriers.map((c) => ({
             id: c.id,
             name: c.name.trim() || "مندوب",
           }))}
-          // تحويل قائمة المجهزين بشكل نظيف ومستقل عن المحلات
           transferTargetEmployees={companyPreparers.map((prep) => ({
             id: prep.walletEmployeeId!,
             name: prep.name.trim() || "مجهز",
-            shopName: "", // إخفاء اسم المحل نهائياً للمجهز
+            shopName: "",
             phone: prep.phone.trim() || "",
           }))}
           availableForTransferStr={formatDinarAsAlfWithUnit(availableForTransfer)}
           pendingOutgoingCount={pendingOutgoingCount}
+          uiSettings={uiSettings}
         />
       </div>
     </div>

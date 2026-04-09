@@ -364,7 +364,7 @@ export function PreparerWalletTransferSection({
               </div>
             </fieldset>
 
-            {toKind === "courier" ? (
+            {toKind === "courier" && (
               <label className="block text-sm font-bold text-slate-800">
                 اختر المندوب <span className="text-rose-600">*</span>
                 <select
@@ -383,9 +383,9 @@ export function PreparerWalletTransferSection({
                   ))}
                 </select>
               </label>
-            ) : null}
+            )}
 
-            {toKind === "employee" ? (
+            {toKind === "employee" && (
               <div className="space-y-2">
                 <label className="block text-sm font-bold text-slate-800">
                   اختر المجهز الآخر <span className="text-rose-600">*</span>
@@ -406,7 +406,7 @@ export function PreparerWalletTransferSection({
                   </select>
                 </label>
               </div>
-            ) : null}
+            )}
 
             <label className="block text-sm font-bold text-slate-800">
               مكان التسليم <span className="text-rose-600">*</span>

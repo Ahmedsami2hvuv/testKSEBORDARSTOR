@@ -54,9 +54,20 @@ export async function createShop(
   const ownerName = String(formData.get("ownerName") ?? "").trim();
   const locationUrl = String(formData.get("locationUrl") ?? "").trim();
   const regionId = String(formData.get("regionId") ?? "").trim();
+
   if (!name) {
     return { error: "اسم المحل مطلوب" };
   }
+
+  // تحقق من وجود محل بنفس الاسم
+  const existingShop = await prisma.shop.findFirst({
+    where: { name: { equals: name, mode: "insensitive" } },
+  });
+
+  if (existingShop) {
+    return { error: `اسم المحل "${name}" موجود مسبقاً. يرجى استخدام اسم مختلف أو تعديل المحل الحالي.` };
+  }
+
   if (!locationUrl) {
     return { error: "رابط الموقع (اللوكيشن) مطلوب" };
   }
@@ -104,6 +115,8 @@ export async function createShop(
 export async function deleteShop(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
+
+  // طلب تأكيد قبل الحذف (يتم التعامل معه في جانب العميل عادةً، ولكن هنا نضيف حماية بسيطة)
   await prisma.shop.delete({ where: { id } });
   revalidatePath("/admin/shops");
 }
@@ -123,6 +136,19 @@ export async function updateShop(
   if (!name) {
     return { error: "اسم المحل مطلوب" };
   }
+
+  // تحقق من وجود محل آخر بنفس الاسم عند التعديل
+  const existingOtherShop = await prisma.shop.findFirst({
+    where: {
+      name: { equals: name, mode: "insensitive" },
+      id: { not: id }
+    },
+  });
+
+  if (existingOtherShop) {
+    return { error: `اسم المحل "${name}" مستخدم من قبل محل آخر.` };
+  }
+
   if (!locationUrl) {
     return { error: "رابط الموقع مطلوب" };
   }

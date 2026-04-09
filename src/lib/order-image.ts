@@ -5,8 +5,8 @@ const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 // رفع الحد الأقصى للرفع إلى 20 ميجابايت لضمان قبول كافة صور الهواتف الحديثة
 export const MAX_ORDER_IMAGE_BYTES = 20 * 1024 * 1024;
 
-// رفع حد التخزين في قاعدة البيانات إلى 5 ميجابايت لضمان بقاء الصور الكبيرة مستقرة
-const MAX_BASE64_STORAGE_BYTES = 5 * 1024 * 1024;
+// رفع حد التخزين في قاعدة البيانات لضمان بقاء الصور الكبيرة مستقرة حتى لو فشل التصغير
+const MAX_BASE64_STORAGE_BYTES = 10 * 1024 * 1024;
 
 export function inferImageMime(file: File): string | null {
   const t = file.type?.trim().toLowerCase();
@@ -41,7 +41,7 @@ async function processImageToBase64(file: File): Promise<string> {
       buf = resized as Buffer;
     }
   } catch (e) {
-    console.error("Image resize failed", e);
+    console.error("Image resize failed, using original", e);
   }
 
   // التحقق النهائي بعد الضغط
@@ -51,6 +51,7 @@ async function processImageToBase64(file: File): Promise<string> {
 
   const b64 = buf.toString("base64");
   // تحويل البيانات إلى Data URL لتعمل مباشرة في المتصفح دون الحاجة لملفات خارجية
+  // نستخدم دائماً jpeg كنوع للمخرجات لأن Sharp يحولها لـ jpeg في resizeImageBufferForShop
   return `data:image/jpeg;base64,${b64}`;
 }
 

@@ -85,6 +85,15 @@ export async function upsertCustomerPhoneProfile(
   if (!region) {
     return { error: "المنطقة غير موجودة" };
   }
+
+  const existing = await prisma.customerPhoneProfile.findUnique({
+    where: { phone_regionId: { phone: n, regionId } },
+  });
+
+  if (existing) {
+    return { error: "هذا الزبون موجود مسبقاً في هذه المنطقة." };
+  }
+
   const locParsed = parseLocationUrl(String(formData.get("locationUrl") ?? ""));
   if (!locParsed.ok) {
     return { error: locParsed.error };
@@ -109,17 +118,13 @@ export async function upsertCustomerPhoneProfile(
     return { error: uploaded.error };
   }
 
-  const existing = await prisma.customerPhoneProfile.findUnique({
-    where: { phone_regionId: { phone: n, regionId } },
-  });
-  let photoUrl = existing?.photoUrl ?? "";
+  let photoUrl = "";
   if (uploaded.photoUrl) {
     photoUrl = uploaded.photoUrl;
   }
 
-  await prisma.customerPhoneProfile.upsert({
-    where: { phone_regionId: { phone: n, regionId } },
-    create: {
+  await prisma.customerPhoneProfile.create({
+    data: {
       phone: n,
       regionId,
       locationUrl: locParsed.url,
@@ -127,13 +132,6 @@ export async function upsertCustomerPhoneProfile(
       photoUrl,
       alternatePhone,
       notes,
-    },
-    update: {
-      locationUrl: locParsed.url,
-      landmark,
-      notes,
-      alternatePhone,
-      ...(uploaded.photoUrl ? { photoUrl: uploaded.photoUrl } : {}),
     },
   });
 

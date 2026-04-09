@@ -12,6 +12,9 @@ import { prisma } from "@/lib/prisma";
 import { normalizeIraqMobileLocal11 } from "@/lib/whatsapp";
 import { MandoubMoneySummarySection } from "../../mandoub-money-summary-section";
 import { OrderDetailSection } from "../../order-detail-section";
+import { ThemeSwitcher } from "@/components/theme-switcher";
+import { MandoubPresenceToggle } from "../../mandoub-presence-toggle";
+import { getUISettings } from "@/lib/ui-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -68,7 +71,7 @@ export default async function MandoubOrderDetailPage({ params, searchParams }: P
 
   const courier = await prisma.courier.findUnique({
     where: { id: v.courierId },
-    select: { blocked: true, mandoubTotalsResetAt: true, vehicleType: true },
+    select: { id: true, name: true, phone: true, blocked: true, mandoubTotalsResetAt: true, vehicleType: true, availableForAssignment: true },
   });
   if (!courier || courier.blocked) {
     return (
@@ -120,9 +123,25 @@ export default async function MandoubOrderDetailPage({ params, searchParams }: P
     courier.mandoubTotalsResetAt
   );
 
+  // جلب إعدادات الستايل لقسم تفاصيل الطلب
+  const uiSettings = await getUISettings("mandoub", "order_details");
+
   return (
     <div dir="rtl" lang="ar" className="kse-app-bg min-h-screen text-base leading-relaxed text-slate-800">
       <div className="kse-app-inner mx-auto max-w-6xl px-3 py-4 pb-24 text-base sm:px-4 sm:text-lg">
+        <header className="kse-glass-dark mb-3 flex items-center gap-2 border border-sky-200/90 px-3 py-2.5 shadow-sm">
+          <Link href={`/mandoub?${baseQuery.toString()}`} className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">
+            <svg className="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+          </Link>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-base font-black text-slate-900 sm:text-lg dark:text-[#00f3ff]">{courier.name}</p>
+            <p className="text-[10px] font-bold text-slate-500 sm:text-xs">{courier.phone}</p>
+          </div>
+          <ThemeSwitcher />
+          <MandoubPresenceToggle auth={baseAuth} availableForAssignment={courier.availableForAssignment} />
+          <Link href={`/mandoub/wallet?${baseQuery.toString()}`} className="inline-flex shrink-0 items-center justify-center rounded-xl border-2 border-violet-500 bg-violet-600 px-3 py-2 text-center text-sm font-black text-white shadow-sm hover:bg-violet-700 sm:px-4 sm:text-base">المحفظة</Link>
+        </header>
+
         <MandoubMoneySummarySection
           totalsBaseline={courier.mandoubTotalsResetAt}
           sumDeliveryInDinar={Number(moneySums.sumDeliveryIn)}
@@ -140,6 +159,7 @@ export default async function MandoubOrderDetailPage({ params, searchParams }: P
           auth={baseAuth}
           nextUrl={`/mandoub/order/${orderId}?${baseQuery.toString()}`}
           viewerCourierId={v.courierId}
+          uiSettings={uiSettings}
         />
       </div>
     </div>

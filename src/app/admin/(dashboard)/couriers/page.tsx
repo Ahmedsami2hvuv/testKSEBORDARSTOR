@@ -4,8 +4,9 @@ import { ad } from "@/lib/admin-ui";
 import { getPublicAppUrl } from "@/lib/app-url";
 import { buildDelegatePortalUrl } from "@/lib/delegate-link";
 import { buildCourierShareMessage, whatsappAppUrl } from "@/lib/whatsapp";
-import { deleteCourier } from "./actions";
+import { deleteCourierAction } from "./actions";
 import { CourierForm } from "./courier-form";
+import { CourierDeleteForm } from "./courier-delete-form";
 
 export const dynamic = "force-dynamic";
 
@@ -106,12 +107,7 @@ export default async function AdminCouriersPage() {
                     >
                       تعديل
                     </Link>
-                    <form action={deleteCourier}>
-                      <input type="hidden" name="id" value={c.id} />
-                      <button type="submit" className={ad.dangerLink}>
-                        حذف
-                      </button>
-                    </form>
+                    <CourierDeleteForm id={c.id} name={c.name} />
                   </div>
                 </li>
               );

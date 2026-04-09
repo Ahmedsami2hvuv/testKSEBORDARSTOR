@@ -22,17 +22,16 @@ import {
   syncSecondPhoneProfileFromOrder,
 } from "@/lib/customer-phone-profile-sync";
 import { normalizeIraqMobileLocal11 } from "@/lib/whatsapp";
+import { PreparerShoppingDraftStatus } from "@prisma/client";
+import { isAdminSession } from "@/lib/admin-session";
 
-export type AdminCreateOrderState = { ok?: boolean; error?: string };
+export type AdminCreateOrderState = { ok?: boolean; error?: string; draftIds?: string[] };
 
-type AdminSubmissionMode = "from_shop" | "admin_one_face" | "two_faces";
+type AdminSubmissionMode = "from_shop" | "admin_one_face" | "two_faces" | "preparation";
 
 const SYSTEM_ADMIN_SHOP_NAME = "طلبات الإدارة العامة";
 const SYSTEM_ADMIN_PHONE = "07733921568";
 
-/**
- * جلب أو إنشاء محل النظام الخاص بالطلبات الإدارية المباشرة
- */
 async function getOrCreateSystemAdminShop(): Promise<{ id: string, regionId: string, photoUrl: string | null }> {
   let shop = await prisma.shop.findFirst({
     where: { name: SYSTEM_ADMIN_SHOP_NAME }
@@ -51,7 +50,6 @@ async function getOrCreateSystemAdminShop(): Promise<{ id: string, regionId: str
       }
     });
   } else if (shop.phone !== SYSTEM_ADMIN_PHONE) {
-    // تحديث رقم الإدارة إذا كان مختلفاً
     shop = await prisma.shop.update({
       where: { id: shop.id },
       data: { phone: SYSTEM_ADMIN_PHONE }
@@ -61,9 +59,6 @@ async function getOrCreateSystemAdminShop(): Promise<{ id: string, regionId: str
   return { id: shop.id, regionId: shop.regionId, photoUrl: shop.photoUrl || null };
 }
 
-/**
- * ربط الزبون بالمحل والرقم — وتحديث التفاصيل المكانية.
- */
 async function upsertCustomerByPhone(opts: {
   shopId: string;
   phone: string;
@@ -108,167 +103,237 @@ export async function createAdminOrder(
   _prev: AdminCreateOrderState,
   formData: FormData,
 ): Promise<AdminCreateOrderState> {
-  const modeRaw = String(formData.get("adminSubmissionMode") ?? "from_shop").trim();
-  const adminSubmissionMode: AdminSubmissionMode =
-    modeRaw === "admin_one_face" || modeRaw === "two_faces" ? modeRaw : "from_shop";
-
-  const routeMode: "single" | "double" = adminSubmissionMode === "two_faces" ? "double" : "single";
-
-  let adminOrderCode = String(formData.get("adminOrderCode") ?? "").trim();
-  if (!adminOrderCode) {
-    adminOrderCode = `ADM-${randomBytes(5).toString("hex").toUpperCase()}`;
-  }
-
-  // تحديد المحل المسؤول
-  let targetShopId = "";
-  if (adminSubmissionMode === "from_shop") {
-    targetShopId = String(formData.get("shopId") ?? "").trim();
-    if (!targetShopId) return { error: "اختر المحل." };
-  } else {
-    // في حالة وجهة واحدة أو وجهتين، نستخدم حصراً محل النظام الخاص بالإدارة
-    const systemShop = await getOrCreateSystemAdminShop();
-    targetShopId = systemShop.id;
-  }
-
-  const orderType = String(formData.get("orderType") ?? "").trim();
-  const summary = String(formData.get("summary") ?? "").trim();
-  const orderNoteTime = String(formData.get("orderNoteTime") ?? "").trim();
-
-  const firstPhoneRaw = String(formData.get("firstCustomerPhone") ?? "").trim();
-  const firstRegionIdRaw = String(formData.get("firstCustomerRegionId") ?? "").trim();
-  const firstLocationUrl = String(formData.get("firstCustomerLocationUrl") ?? "").trim();
-  const firstLandmark = String(formData.get("firstCustomerLandmark") ?? "").trim();
-
-  const secondPhoneRaw = String(formData.get("secondCustomerPhone") ?? "").trim();
-  const secondRegionIdRaw = String(formData.get("secondCustomerRegionId") ?? "").trim();
-  const secondLocationUrl = String(formData.get("secondCustomerLocationUrl") ?? "").trim();
-  const secondLandmark = String(formData.get("secondCustomerLandmark") ?? "").trim();
-
-  if (!orderType) return { error: "نوع الطلب مطلوب." };
-  if (!orderNoteTime) return { error: "وقت الطلب إجباري." };
-
-  const firstPhone = normalizeIraqMobileLocal11(firstPhoneRaw);
-  if (!firstPhone) return { error: "رقم الزبون غير صالح." };
-  if (!firstRegionIdRaw) return { error: "منطقة الزبون مطلوبة." };
-
-  let secondPhone: string | null = null;
-  let secondRegionId: string | null = null;
-  if (routeMode === "double") {
-    secondPhone = normalizeIraqMobileLocal11(secondPhoneRaw);
-    if (!secondPhone) return { error: "رقم المستلم غير صالح." };
-    if (!secondRegionIdRaw) return { error: "منطقة المستلم مطلوبة." };
-    secondRegionId = secondRegionIdRaw;
-  }
-
-  const subtotalParsed = parseAlfInputToDinarDecimalRequired(
-    String(formData.get("orderSubtotal") ?? ""),
-  );
-  if (!subtotalParsed.ok) return { error: "سعر الطلب غير صالح." };
-
-  const [shop, firstRegion] = await Promise.all([
-    prisma.shop.findUnique({ where: { id: targetShopId }, include: { region: true } }),
-    prisma.region.findUnique({ where: { id: firstRegionIdRaw } }),
-  ]);
-
-  if (!shop || !firstRegion) return { error: "المعلومات الأساسية غير موجودة." };
-
-  let secondRegion = null;
-  if (secondRegionId) {
-    secondRegion = await prisma.region.findUnique({ where: { id: secondRegionId } });
-  }
-
-  // المرفقات
-  const orderImg = formData.get("orderImage");
-  const firstDoor = formData.get("firstCustomerDoorPhoto");
-  const secondDoor = formData.get("secondCustomerDoorPhoto");
-  const voice = formData.get("voiceNote");
-
-  let imageUrl: string | null = null;
-  let firstDoorUrl: string | null = null;
-  let secondDoorUrl: string | null = null;
-  let voiceNoteUrl: string | null = null;
-
   try {
-    if (orderImg instanceof File && orderImg.size > 0) imageUrl = await saveOrderImageUploaded(orderImg, MAX_ORDER_IMAGE_BYTES);
-    if (firstDoor instanceof File && firstDoor.size > 0) firstDoorUrl = await saveCustomerDoorPhotoUploaded(firstDoor, MAX_ORDER_IMAGE_BYTES);
-    if (secondDoor instanceof File && secondDoor.size > 0) secondDoorUrl = await saveCustomerDoorPhotoUploaded(secondDoor, MAX_ORDER_IMAGE_BYTES);
-    if (voice instanceof File && voice.size > 0) voiceNoteUrl = await saveVoiceNoteUploaded(voice, MAX_VOICE_NOTE_BYTES);
-  } catch (e) {
-    return { error: "تعذّر حفظ الملفات المرفقة." };
-  }
+    const admin = await isAdminSession();
+    if (!admin) return { error: "غير مصرّح (Admin session required)." };
 
-  const firstCustomerRow = await upsertCustomerByPhone({
-    shopId: targetShopId,
-    phone: firstPhone,
-    regionId: firstRegionIdRaw,
-    locationUrl: firstLocationUrl,
-    landmark: firstLandmark,
-    doorPhotoUrl: firstDoorUrl,
-  });
+    const modeRaw = String(formData.get("adminSubmissionMode") ?? "from_shop").trim();
+    const adminSubmissionMode: AdminSubmissionMode =
+      modeRaw === "admin_one_face" || modeRaw === "two_faces" || modeRaw === "preparation" ? modeRaw : "from_shop";
 
-  if (routeMode === "double" && secondPhone && secondRegionId) {
-    await upsertCustomerByPhone({
+    // --- Handling Preparation Draft Mode ---
+    if (adminSubmissionMode === "preparation") {
+      const preparerIds = formData.getAll("preparerIds").map(String).map(s => s.trim()).filter(Boolean);
+      if (preparerIds.length === 0) return { error: "اختر مجهّزاً واحداً على الأقل للإسناد." };
+
+      const titleLine = String(formData.get("orderType") ?? "").trim();
+      const rawListText = String(formData.get("rawListText") ?? "").trim();
+      const productsCsv = String(formData.get("productsCsv") ?? "").trim();
+      const customerRegionId = String(formData.get("firstCustomerRegionId") ?? "").trim();
+      const customerPhone = String(formData.get("firstCustomerPhone") ?? "").trim();
+      const customerName = String(formData.get("customerName") ?? "").trim();
+      const customerLandmark = String(formData.get("firstCustomerLandmark") ?? "").trim();
+      const orderNoteTime = String(formData.get("orderNoteTime") ?? "").trim();
+
+      if (!titleLine || !productsCsv || !customerRegionId || !orderNoteTime) {
+        return { error: "بيانات ناقصة — تأكد من عنوان الطلب والمنطقة والمنتجات ووقت الطلب." };
+      }
+
+      const phoneLocal = normalizeIraqMobileLocal11(customerPhone) || customerPhone;
+      const lines = productsCsv.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const products = lines.map((line) => ({ line, buyAlf: null, sellAlf: null, pricedBy: null }));
+
+      const groupId = randomBytes(8).toString("hex");
+
+      const createdDraftIds: string[] = [];
+      for (const preparerId of preparerIds) {
+        const draft = await prisma.companyPreparerShoppingDraft.create({
+          data: {
+            preparerId,
+            status: PreparerShoppingDraftStatus.draft,
+            titleLine,
+            rawListText,
+            customerRegionId,
+            customerPhone: phoneLocal,
+            customerName,
+            customerLandmark,
+            orderTime: orderNoteTime,
+            data: {
+              version: 1,
+              products,
+              groupId,
+              fromAdminId: "admin",
+              fromAdminName: "الإدارة"
+            },
+          },
+          select: { id: true },
+        });
+        createdDraftIds.push(draft.id);
+
+        await prisma.companyPreparerPrepNotice.create({
+          data: {
+            preparerId,
+            title: "طلب تجهيز جديد",
+            body: `تم تحويل طلب تجهيز من الإدارة (${titleLine}).`,
+          },
+        });
+      }
+
+      revalidatePath("/admin/orders/pending");
+      return { ok: true, draftIds: createdDraftIds };
+    }
+
+    const routeMode: "single" | "double" = adminSubmissionMode === "two_faces" ? "double" : "single";
+
+    let adminOrderCode = String(formData.get("adminOrderCode") ?? "").trim();
+    if (!adminOrderCode) {
+      adminOrderCode = `ADM-${randomBytes(5).toString("hex").toUpperCase()}`;
+    }
+
+    let targetShopId = "";
+    if (adminSubmissionMode === "from_shop") {
+      targetShopId = String(formData.get("shopId") ?? "").trim();
+      if (!targetShopId) return { error: "اختر المحل." };
+    } else {
+      const systemShop = await getOrCreateSystemAdminShop();
+      targetShopId = systemShop.id;
+    }
+
+    const orderType = String(formData.get("orderType") ?? "").trim();
+    const summary = String(formData.get("summary") ?? "").trim();
+    const orderNoteTime = String(formData.get("orderNoteTime") ?? "").trim();
+
+    const firstPhoneRaw = String(formData.get("firstCustomerPhone") ?? "").trim();
+    const firstRegionIdRaw = String(formData.get("firstCustomerRegionId") ?? "").trim();
+    const firstLocationUrl = String(formData.get("firstCustomerLocationUrl") ?? "").trim();
+    const firstLandmark = String(formData.get("firstCustomerLandmark") ?? "").trim();
+
+    const secondPhoneRaw = String(formData.get("secondCustomerPhone") ?? "").trim();
+    const secondRegionIdRaw = String(formData.get("secondCustomerRegionId") ?? "").trim();
+    const secondLocationUrl = String(formData.get("secondCustomerLocationUrl") ?? "").trim();
+    const secondLandmark = String(formData.get("secondCustomerLandmark") ?? "").trim();
+
+    if (!orderType) return { error: "نوع الطلب مطلوب." };
+    if (!orderNoteTime) return { error: "وقت الطلب إجباري." };
+
+    const firstPhone = normalizeIraqMobileLocal11(firstPhoneRaw);
+    if (!firstPhone) return { error: "رقم الزبون غير صالح." };
+    if (!firstRegionIdRaw) return { error: "منطقة الزبون مطلوبة." };
+
+    let secondPhone: string | null = null;
+    let secondRegionId: string | null = null;
+    if (routeMode === "double") {
+      secondPhone = normalizeIraqMobileLocal11(secondPhoneRaw);
+      if (!secondPhone) return { error: "رقم المستلم غير صالح." };
+      if (!secondRegionIdRaw) return { error: "منطقة المستلم مطلوبة." };
+      secondRegionId = secondRegionIdRaw;
+    }
+
+    const subtotalParsed = parseAlfInputToDinarDecimalRequired(
+      String(formData.get("orderSubtotal") ?? ""),
+    );
+    if (!subtotalParsed.ok) return { error: "سعر الطلب غير صالح." };
+
+    const [shop, firstRegion] = await Promise.all([
+      prisma.shop.findUnique({ where: { id: targetShopId }, include: { region: true } }),
+      prisma.region.findUnique({ where: { id: firstRegionIdRaw } }),
+    ]);
+
+    if (!shop || !firstRegion) return { error: "المعلومات الأساسية غير موجودة (المحل أو المنطقة)." };
+
+    let secondRegion = null;
+    if (secondRegionId) {
+      secondRegion = await prisma.region.findUnique({ where: { id: secondRegionId } });
+    }
+
+    const orderImg = formData.get("orderImage");
+    const firstDoor = formData.get("firstCustomerDoorPhoto");
+    const secondDoor = formData.get("secondCustomerDoorPhoto");
+    const voice = formData.get("voiceNote");
+
+    let imageUrl: string | null = null;
+    let firstDoorUrl: string | null = null;
+    let secondDoorUrl: string | null = null;
+    let voiceNoteUrl: string | null = null;
+
+    try {
+      if (orderImg && orderImg instanceof File && orderImg.size > 0) imageUrl = await saveOrderImageUploaded(orderImg, MAX_ORDER_IMAGE_BYTES);
+      if (firstDoor && firstDoor instanceof File && firstDoor.size > 0) firstDoorUrl = await saveCustomerDoorPhotoUploaded(firstDoor, MAX_ORDER_IMAGE_BYTES);
+      if (secondDoor && secondDoor instanceof File && secondDoor.size > 0) secondDoorUrl = await saveCustomerDoorPhotoUploaded(secondDoor, MAX_ORDER_IMAGE_BYTES);
+      if (voice && voice instanceof File && voice.size > 0) voiceNoteUrl = await saveVoiceNoteUploaded(voice, MAX_VOICE_NOTE_BYTES);
+    } catch (e: any) {
+      console.error("File upload error:", e);
+      if (e.message === "IMAGE_TOO_LARGE") return { error: "حجم الصورة كبير جداً." };
+      if (e.message === "IMAGE_BAD_TYPE") return { error: "نوع الصورة غير مدعوم." };
+      if (e.message === "IMAGE_TOO_LARGE_AFTER_RESIZE") return { error: "الصورة كبيرة جداً حتى بعد محاولة التصغير." };
+      return { error: `تعذّر حفظ الملفات: ${e.message}` };
+    }
+
+    const firstCustomerRow = await upsertCustomerByPhone({
       shopId: targetShopId,
-      phone: secondPhone,
-      regionId: secondRegionId,
-      locationUrl: secondLocationUrl,
-      landmark: secondLandmark,
-      doorPhotoUrl: secondDoorUrl,
+      phone: firstPhone,
+      regionId: firstRegionIdRaw,
+      locationUrl: firstLocationUrl,
+      landmark: firstLandmark,
+      doorPhotoUrl: firstDoorUrl,
     });
+
+    if (routeMode === "double" && secondPhone && secondRegionId) {
+      await upsertCustomerByPhone({
+        shopId: targetShopId,
+        phone: secondPhone,
+        regionId: secondRegionId,
+        locationUrl: secondLocationUrl,
+        landmark: secondLandmark,
+        doorPhotoUrl: secondDoorUrl,
+      });
+    }
+
+    const shopDel = shop.region.deliveryPrice;
+    const firstDel = firstRegion.deliveryPrice;
+    const secondDel = secondRegion?.deliveryPrice ?? new Decimal(0);
+
+    const delivery = adminSubmissionMode === "admin_one_face"
+      ? firstDel
+      : (routeMode === "double"
+          ? Decimal.max(shopDel, firstDel, secondDel)
+          : Decimal.max(shopDel, firstDel));
+
+    const total = new Decimal(subtotalParsed.value).plus(delivery);
+
+    const order = await prisma.order.create({
+      data: {
+        shopId: targetShopId,
+        customerId: firstCustomerRow.id,
+        status: "pending",
+        routeMode,
+        adminOrderCode,
+        submissionSource: "admin_portal",
+        summary,
+        orderType,
+        orderNoteTime,
+        customerPhone: firstPhone,
+        customerRegionId: firstRegionIdRaw,
+        customerLocationUrl: firstLocationUrl,
+        customerLandmark: firstLandmark,
+        customerDoorPhotoUrl: firstDoorUrl || null,
+        secondCustomerPhone: routeMode === "double" ? secondPhone : null,
+        secondCustomerRegionId: routeMode === "double" ? secondRegionId : null,
+        secondCustomerLocationUrl: routeMode === "double" ? secondLocationUrl : "",
+        secondCustomerLandmark: routeMode === "double" ? secondLandmark : "",
+        secondCustomerDoorPhotoUrl: routeMode === "double" ? (secondDoorUrl || null) : null,
+        orderSubtotal: subtotalParsed.value,
+        deliveryPrice: delivery,
+        totalAmount: total,
+        imageUrl,
+        voiceNoteUrl,
+        shopDoorPhotoUrl: shop.photoUrl?.trim() || null,
+        orderImageUploadedByName: imageUrl ? ORDER_UPLOADER_ADMIN_LABEL : null,
+        customerDoorPhotoUploadedByName: firstDoorUrl ? ORDER_UPLOADER_ADMIN_LABEL : null,
+      },
+    });
+
+    await syncPhoneProfileFromOrder(order.id);
+    if (routeMode === "double") await syncSecondPhoneProfileFromOrder(order.id);
+
+    void notifyTelegramNewOrder(order.id);
+    void pushNotifyAdminsNewPendingOrder(order.orderNumber);
+
+    revalidatePath("/admin/orders/pending");
+    revalidatePath("/admin/orders/tracking");
+    return { ok: true };
+  } catch (err: any) {
+    console.error("Admin order creation general error:", err);
+    return { error: `حدث خطأ: ${err.message || "غير متوقع"}` };
   }
-
-  // التسعير
-  const shopDel = shop.region.deliveryPrice;
-  const firstDel = firstRegion.deliveryPrice;
-  const secondDel = secondRegion?.deliveryPrice ?? new Decimal(0);
-
-  const delivery = adminSubmissionMode === "admin_one_face"
-    ? firstDel
-    : (routeMode === "double"
-        ? Decimal.max(shopDel, firstDel, secondDel)
-        : Decimal.max(shopDel, firstDel));
-
-  const total = new Decimal(subtotalParsed.value).plus(delivery);
-
-  const order = await prisma.order.create({
-    data: {
-      shopId: targetShopId,
-      customerId: firstCustomerRow.id,
-      status: "pending",
-      routeMode,
-      adminOrderCode,
-      submissionSource: "admin_portal",
-      summary,
-      orderType,
-      orderNoteTime,
-      customerPhone: firstPhone,
-      customerRegionId: firstRegionIdRaw,
-      customerLocationUrl: firstLocationUrl,
-      customerLandmark: firstLandmark,
-      customerDoorPhotoUrl: firstDoorUrl || null,
-      secondCustomerPhone: routeMode === "double" ? secondPhone : null,
-      secondCustomerRegionId: routeMode === "double" ? secondRegionId : null,
-      secondCustomerLocationUrl: routeMode === "double" ? secondLocationUrl : "",
-      secondCustomerLandmark: routeMode === "double" ? secondLandmark : "",
-      secondCustomerDoorPhotoUrl: routeMode === "double" ? (secondDoorUrl || null) : null,
-      orderSubtotal: subtotalParsed.value,
-      deliveryPrice: delivery,
-      totalAmount: total,
-      imageUrl,
-      voiceNoteUrl,
-      shopDoorPhotoUrl: shop.photoUrl?.trim() || null,
-      orderImageUploadedByName: imageUrl ? ORDER_UPLOADER_ADMIN_LABEL : null,
-      customerDoorPhotoUploadedByName: firstDoorUrl ? ORDER_UPLOADER_ADMIN_LABEL : null,
-    },
-  });
-
-  await syncPhoneProfileFromOrder(order.id);
-  if (routeMode === "double") await syncSecondPhoneProfileFromOrder(order.id);
-
-  void notifyTelegramNewOrder(order.id);
-  void pushNotifyAdminsNewPendingOrder(order.orderNumber);
-
-  revalidatePath("/admin/orders/pending");
-  revalidatePath("/admin/orders/tracking");
-  return { ok: true };
 }

@@ -20,6 +20,7 @@ export const ADMIN_TILES: AdminTile[] = [
   { slug: "wallet-ledger", label: "سجل المحافظ بين الأطراف", emoji: "📒", href: "/admin/reports/wallet-ledger" },
   { slug: "prep-notices", label: "إشعارات تجهيز المجهزين", emoji: "📣", href: "/admin/prep-notices" },
 
+  { slug: "new-customer-profile", label: "إضافة زبون مرجعي", emoji: "👤➕", href: "/admin/customers/profiles/new" },
   { slug: "customers", label: "بيانات الزبائن", emoji: "👥", href: "/admin/customers" },
   { slug: "couriers", label: "المندوبين", emoji: "🏍️", href: "/admin/couriers" },
   { slug: "courier-map", label: "خريطة المندوبين", emoji: "🗺️", href: "/admin/couriers/map" },

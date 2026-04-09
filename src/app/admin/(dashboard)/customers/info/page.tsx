@@ -62,10 +62,45 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
   const q = (sp.q ?? "").trim().toLowerCase();
   const phoneNorm = normalizeIraqMobileLocal11(phone) ?? phone;
 
-  const [ordersBase, profiles] = await Promise.all([
-    prisma.order.findMany({
-      where: { customerPhone: phone },
-      orderBy: [{ createdAt: "asc" }, { orderNumber: "asc" }],
+  // 1. جلب البيانات المرجعية (سريع جداً)
+  const profiles = phoneNorm
+    ? await prisma.customerPhoneProfile.findMany({
+        where: { phone: phoneNorm },
+        include: { region: { select: { id: true, name: true } } },
+      })
+    : [];
+
+  // 2. جلب إحصائيات المناطق (سريع جداً باستخدام groupBy)
+  const orderStats = await prisma.order.groupBy({
+    by: ['customerRegionId'],
+    where: { customerPhone: phone },
+    _count: { id: true }
+  });
+
+  // 3. جلب عدد الطلبات الكلي (سريع)
+  const totalOrderCount = await prisma.order.count({
+    where: { customerPhone: phone }
+  });
+
+  // 4. جلب المندوبين (فقط عند الحاجة)
+  const couriers =
+    regionIdParam !== ""
+      ? await prisma.courier.findMany({
+          where: courierAssignableWhere,
+          orderBy: { name: "asc" },
+          select: { id: true, name: true },
+        })
+      : [];
+
+  // 5. جلب الطلبات للمنطقة المختارة فقط (تحميل كسلان)
+  let ordersFiltered: any[] | null = null;
+  if (regionIdParam !== "") {
+    ordersFiltered = await prisma.order.findMany({
+      where: {
+        customerPhone: phone,
+        customerRegionId: regionIdParam === NO_REGION_SLUG ? null : regionIdParam,
+      },
+      orderBy: [{ createdAt: "desc" }, { orderNumber: "desc" }],
       include: {
         shop: true,
         courier: true,
@@ -79,38 +114,41 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
         },
         customerRegion: { select: { id: true, name: true } },
       },
-    }),
-    phoneNorm
-      ? prisma.customerPhoneProfile.findMany({
-          where: { phone: phoneNorm },
-          include: { region: { select: { id: true, name: true } } },
-        })
-      : Promise.resolve([]),
-  ]);
-
-  const couriers =
-    regionIdParam !== ""
-      ? await prisma.courier.findMany({
-          where: courierAssignableWhere,
-          orderBy: { name: "asc" },
-          select: { id: true, name: true },
-        })
-      : [];
-
-  const regionCounts = new Map<
-    string | null,
-    { name: string; count: number }
-  >();
-
-  for (const o of ordersBase) {
-    const rid = o.customerRegionId;
-    const rname =
-      rid && o.customerRegion ? o.customerRegion.name : "بدون منطقة";
-    const prev = regionCounts.get(rid);
-    if (prev) prev.count += 1;
-    else regionCounts.set(rid, { name: rname, count: 1 });
+      take: 50, // عرض آخر 50 طلب لتسريع الصفحة، يمكن زيادة هذا الرقم أو إضافة ترقيم لاحقاً
+    });
   }
 
+  // بناء خريطة المناطق والأسماء
+  const regionCounts = new Map<string | null, { name: string; count: number }>();
+
+  // تجميع كافة معرفات المناطق من الإحصائيات والبروفايلات
+  const ridFromStats = orderStats.map(s => s.customerRegionId);
+  const ridFromProfiles = profiles.map(p => p.regionId);
+  const allRegionIds = Array.from(new Set([...ridFromStats, ...ridFromProfiles])).filter(id => id !== null) as string[];
+
+  // جلب الأسماء للمناطق التي لا تملك بروفايل مرجعي
+  const knownProfileRegionIds = new Set(profiles.map(p => p.regionId));
+  const missingRegionIds = allRegionIds.filter(id => !knownProfileRegionIds.has(id));
+
+  const additionalRegions = missingRegionIds.length > 0
+    ? await prisma.region.findMany({
+        where: { id: { in: missingRegionIds } },
+        select: { id: true, name: true }
+      })
+    : [];
+
+  const regionNamesMap = new Map<string | null, string>();
+  regionNamesMap.set(null, "بدون منطقة");
+  profiles.forEach(p => regionNamesMap.set(p.regionId, p.region.name));
+  additionalRegions.forEach(r => regionNamesMap.set(r.id, r.name));
+
+  // ملء الإحصائيات
+  for (const s of orderStats) {
+    regionCounts.set(s.customerRegionId, {
+      name: regionNamesMap.get(s.customerRegionId) || "منطقة غير معروفة",
+      count: s._count.id
+    });
+  }
   for (const p of profiles) {
     if (!regionCounts.has(p.regionId)) {
       regionCounts.set(p.regionId, { name: p.region.name, count: 0 });
@@ -127,15 +165,6 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
     return blob.includes(q);
   });
 
-  const regionCount = regionCounts.size;
-
-  const ordersFiltered =
-    regionIdParam === ""
-      ? null
-      : regionIdParam === NO_REGION_SLUG
-        ? ordersBase.filter((o) => o.customerRegionId === null)
-        : ordersBase.filter((o) => o.customerRegionId === regionIdParam);
-
   const profileForRegion =
     regionIdParam &&
     regionIdParam !== NO_REGION_SLUG &&
@@ -147,18 +176,12 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
     regionIdParam === ""
       ? null
       : regionIdParam === NO_REGION_SLUG
-        ? { name: "بدون منطقة (في الطلبية)" }
-        : await prisma.region.findUnique({
-            where: { id: regionIdParam },
-            select: { name: true },
-          });
-
-  const ordersForTable =
-    ordersFiltered !== null ? ordersFiltered : ordersBase;
+        ? { name: "بدون منطقة" }
+        : { name: regionNamesMap.get(regionIdParam) || "منطقة غير معروفة" };
 
   const tableRows =
-    regionIdParam !== ""
-      ? ordersForTable.map((o) => {
+    regionIdParam !== "" && ordersFiltered
+      ? ordersFiltered.map((o) => {
           const missingLoc = !hasCustomerLocationUrl(o.customerLocationUrl, undefined);
           return {
             id: o.id,
@@ -191,12 +214,9 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
           return resolvePublicAssetSrc(raw);
         })();
 
-  /** آخر طلبية في المنطقة المختارة — لعرض لوكيشن/دالة/رقم ثانٍ عند عدم وجود سجل مرجعي */
   const latestOrderInRegion =
     regionIdParam !== "" && ordersFiltered && ordersFiltered.length > 0
-      ? [...ordersFiltered].sort(
-          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-        )[0]
+      ? ordersFiltered[0]
       : null;
 
   return (
@@ -227,6 +247,7 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
           ) : null}
         </p>
       </div>
+
       <section className={`${ad.section} space-y-2`}>
         <form method="get" className="flex flex-wrap items-end gap-2">
           <input type="hidden" name="phone" value={phone} />
@@ -253,15 +274,11 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
             <h2 className={ad.h2}>المناطق</h2>
             <p className="text-sm text-slate-700">
               عدد المناطق المرتبطة بهذا الرقم:{" "}
-              <strong className="text-sky-900 tabular-nums">{regionCount}</strong>
-              {" — "}
-              يشمل مناطق ظهرت في الطلبات أو في السجل المرجعي (رقم + منطقة) حتى
-              بلا طلبات بعد.
+              <strong className="text-sky-900 tabular-nums">{regionCounts.size}</strong>
             </p>
             {regionEntries.length === 0 ? (
               <p className="text-slate-600">
-                لا توجد منطقة مسجّلة لهذا الرقم — قد لا توجد طلبات بعد أو لا يوجد
-                صف مرجعي.
+                لا توجد منطقة مسجّلة لهذا الرقم.
               </p>
             ) : (
               <ul className="space-y-2">
@@ -293,24 +310,17 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
 
           <div className={`${ad.section} space-y-2`}>
             <p className="text-sm text-slate-700">
-              إجمالي الطلبات المسجّلة لهذا الرقم (نفس النص المخزّن في الحقل):{" "}
-              <strong className="tabular-nums text-sky-900">{ordersBase.length}</strong>
+              إجمالي الطلبات المسجّلة لهذا الرقم:{" "}
+              <strong className="tabular-nums text-sky-900">{totalOrderCount}</strong>
             </p>
             <p className="text-sm">
               <Link
                 href={`/admin/customers/orders?phone=${encodeURIComponent(phone)}`}
                 className={ad.link}
               >
-                عرض جميع طلبات هذا الرقم بالترتيب الزمني (بدون تصفية منطقة)
+                عرض جميع طلبات هذا الرقم بالترتيب الزمني
               </Link>
             </p>
-            {ordersBase.length === 0 ? (
-              <p className="text-center text-slate-600">
-                <Link href="/admin/orders/tracking" className={ad.link}>
-                  البحث في تتبع الطلبات
-                </Link>
-              </p>
-            ) : null}
           </div>
         </>
       ) : (
@@ -326,10 +336,7 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
 
           <div className={`${ad.section} space-y-2`}>
             <h2 className={ad.h2}>
-              {regionMeta?.name ??
-                (regionIdParam === NO_REGION_SLUG
-                  ? "بدون منطقة"
-                  : "منطقة غير معروفة")}
+              {regionMeta?.name || "منطقة غير معروفة"}
               {regionIdParam !== NO_REGION_SLUG ? (
                 <span className="ms-2 text-sm font-normal text-slate-500">
                   (تفاصيل مرجعية + طلبيات هذه المنطقة)
@@ -392,7 +399,6 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
                       rel="noopener noreferrer"
                       className="inline-block"
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={doorPhotoSrc}
                         alt=""
@@ -407,7 +413,7 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
                   href={`/admin/customers/profiles/${profileForRegion.id}/edit`}
                   className={ad.link}
                 >
-                  تعديل هذا المرجع في «تفاصيل زبائن مرجعية»
+                  تعديل هذا المرجع
                 </Link>
               </p>
             </div>
@@ -416,29 +422,21 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
           {!profileForRegion && latestOrderInRegion ? (
             <div className={`${ad.section} space-y-4`}>
               <h3 className={ad.h3}>من آخر طلبية في هذه المنطقة</h3>
-              <p className="text-sm text-slate-600">
-                لا يوجد سجل مرجعي محفوظ لهذا الرقم في هذه المنطقة؛ التالي مأخوذ من
-                أحدث طلبية مسجّلة هنا.
-              </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <p className="text-xs font-semibold text-slate-500">اللوكيشن</p>
-                  {(() => {
-                    const o = latestOrderInRegion;
-                    const url = o.customerLocationUrl?.trim() || "";
-                    return url ? (
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`${ad.link} break-all text-sm font-semibold`}
-                      >
-                        فتح الرابط
-                      </a>
-                    ) : (
-                      <p className="text-sm text-slate-600">—</p>
-                    );
-                  })()}
+                  {latestOrderInRegion.customerLocationUrl?.trim() ? (
+                    <a
+                      href={latestOrderInRegion.customerLocationUrl.trim()}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`${ad.link} break-all text-sm font-semibold`}
+                    >
+                      فتح الرابط
+                    </a>
+                  ) : (
+                    <p className="text-sm text-slate-600">—</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-slate-500">
@@ -458,21 +456,15 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
             </div>
           ) : null}
 
-          {!profileForRegion && regionIdParam !== "" && doorPhotoSrc ? (
-            <div className={`${ad.section} space-y-2`}>
+          {doorPhotoSrc && !profileForRegion && (
+             <div className={`${ad.section} space-y-2`}>
               <h3 className={ad.h3}>صورة باب الزبون</h3>
-              <p className="text-sm text-slate-600">
-                {regionIdParam === NO_REGION_SLUG
-                  ? "من آخر طلبية مسجّلة لهذا الرقم ضمن «بدون منطقة»."
-                  : "لا يوجد مرجع رقم+منطقة بعد؛ الصورة من آخر طلبية في هذه المنطقة."}
-              </p>
               <a
                 href={doorPhotoSrc}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-block"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={doorPhotoSrc}
                   alt=""
@@ -480,32 +472,17 @@ export default async function CustomerInfoPage({ searchParams }: Props) {
                 />
               </a>
             </div>
-          ) : null}
-
-          {!profileForRegion &&
-          regionIdParam !== "" &&
-          regionIdParam !== NO_REGION_SLUG &&
-          !doorPhotoSrc ? (
-            <div className={`${ad.section} border-dashed border-amber-200 bg-amber-50/50`}>
-              <p className="text-sm font-semibold text-amber-950">
-                لا يوجد سجل مرجعي محفوظ لهذا الرقم في هذه المنطقة بعد — يمكن
-                إضافته من{" "}
-                <Link href="/admin/customers/profiles" className={ad.link}>
-                  تفاصيل زبائن مرجعية
-                </Link>
-                .
-              </p>
-            </div>
-          ) : null}
+          )}
 
           <div className="space-y-3">
             <h3 className={ad.h3}>
-              طلبيات هذه{" "}
-              {regionIdParam === NO_REGION_SLUG ? "الفئة" : "المنطقة"} (
-              {ordersFiltered?.length ?? 0})
+              طلبيات هذه المنطقة ({ordersFiltered?.length ?? 0})
+              {ordersFiltered && ordersFiltered.length === 50 && (
+                <span className="ms-2 text-xs font-normal text-slate-500">(يتم عرض أحدث 50 فقط)</span>
+              )}
             </h3>
             {ordersFiltered && ordersFiltered.length === 0 ? (
-              <p className="text-slate-600">لا توجد طلبات ضمن هذا التصفية.</p>
+              <p className="text-slate-600">لا توجد طلبات في هذه المنطقة.</p>
             ) : (
               <CustomerOrdersBulkTable orders={tableRows} couriers={couriers} />
             )}

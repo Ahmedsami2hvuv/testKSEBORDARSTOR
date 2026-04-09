@@ -4,12 +4,11 @@ import { verifyCompanyPreparerPortalQuery } from "@/lib/company-preparer-portal-
 import { preparerCourierAssignWhere } from "@/lib/courier-assignable";
 import { preparerPath } from "@/lib/preparer-portal-nav";
 import { loadPreparerPortalOrderTableData } from "@/lib/preparer-portal-order-table-data";
-import type { PreparerPortalTabKey } from "@/lib/preparer-portal-order-table-data";
 import { prisma } from "@/lib/prisma";
 import { PreparerOrdersSection } from "./preparer-orders-client";
 import { PreparerPresenceToggle } from "./preparer-presence-toggle";
 import { PreparerWalletLink } from "./preparer-wallet-link";
-import { PreparerPrepNoticeBanner } from "./preparer-prep-notice-banner";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 
 export const dynamic = "force-dynamic";
 
@@ -41,10 +40,17 @@ export default async function PreparerHomePage({ searchParams }: Props) {
   const sp = await searchParams;
   const cookieStore = await cookies();
 
-  // جلب الهوية من الرابط أو الكوكيز
-  const p = sp.p || cookieStore.get("preparer_p")?.value;
-  const s = sp.s || cookieStore.get("preparer_s")?.value;
-  const exp = sp.exp || cookieStore.get("preparer_exp")?.value;
+  // 1. محاولة جلب البيانات من الرابط (الأولوية للرابط)
+  let p = sp.p;
+  let s = sp.s;
+  let exp = sp.exp;
+
+  // 2. إذا لم تكن في الرابط، نجلبها من الكوكيز
+  if (!p || !s || !exp) {
+    p = p || (await cookieStore).get("preparer_p")?.value;
+    s = s || (await cookieStore).get("preparer_s")?.value;
+    exp = exp || (await cookieStore).get("preparer_exp")?.value;
+  }
 
   const v = verifyCompanyPreparerPortalQuery(p, exp, s);
 
@@ -54,10 +60,19 @@ export default async function PreparerHomePage({ searchParams }: Props) {
         <div className="kse-glass-dark rounded-2xl border border-rose-300 p-8 text-center">
           <p className="text-lg font-bold text-rose-700">لا يمكن فتح حساب المجهز</p>
           <p className="mt-2 text-sm text-slate-600">{invalidMsg(v.reason)}</p>
-          <p className="mt-4 text-xs text-slate-400">مشاركة الرابط من شريط العنوان لا تعمل. يجب استخدام الرابط الأصلي.</p>
+          <p className="mt-4 text-xs text-slate-400 font-bold">تأكد من فتح الرابط الأصلي وليس نسخة مختصرة.</p>
         </div>
       </div>
     );
+  }
+
+  // 3. إذا كانت البيانات صحيحة وفي الرابط، نحفظها في الكوكيز لضمان استمرار الدخول
+  if (sp.p && sp.s && sp.exp) {
+    const cs = await cookies();
+    const oneMonth = 30 * 24 * 60 * 60;
+    cs.set("preparer_p", sp.p, { maxAge: oneMonth, path: "/" });
+    cs.set("preparer_s", sp.s, { maxAge: oneMonth, path: "/" });
+    cs.set("preparer_exp", sp.exp, { maxAge: oneMonth, path: "/" });
   }
 
   const preparer = await prisma.companyPreparer.findFirst({
@@ -100,8 +115,9 @@ export default async function PreparerHomePage({ searchParams }: Props) {
   return (
     <div className="kse-app-inner mx-auto max-w-6xl px-2 py-2 pb-24 text-base leading-relaxed sm:px-4 sm:py-4 sm:text-lg">
       <header className="kse-glass-dark mb-2 flex flex-wrap items-center gap-2 border border-emerald-200/90 px-3 py-2.5 shadow-sm sm:mb-3 sm:px-4">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-base font-black text-slate-900 sm:text-lg">مرحباً {preparer.name}</p>
+        <div className="min-w-0 flex-1 flex items-center gap-3">
+          <ThemeSwitcher />
+          <p className="truncate text-base font-black text-slate-900 sm:text-lg dark:text-slate-100">مرحباً {preparer.name}</p>
         </div>
         <div className="grid w-full shrink-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
           <PreparerPresenceToggle auth={baseAuth} availableForAssignment={preparer.availableForAssignment} />
@@ -115,7 +131,7 @@ export default async function PreparerHomePage({ searchParams }: Props) {
         </div>
       </header>
 
-      <section className="kse-glass-dark overflow-hidden border border-sky-200 shadow-sm">
+      <section className="kse-glass-dark overflow-hidden border border-sky-200 shadow-sm dark:border-slate-800">
         <PreparerOrdersSection
           allRows={tableRows}
           searchFields={searchFields}

@@ -9,6 +9,12 @@ import { formatDinarAsAlf } from "@/lib/money-alf";
 import { baghdadDayRangeUtc, formatBaghdadDateLabel } from "@/lib/baghdad-archived-day";
 import { type TrackingTableRow } from "../../tracking/order-tracking-table-body";
 import { OrderTrackingBulkTable } from "../../tracking/order-tracking-bulk-table";
+import {
+  isWardMismatch,
+  isSaderMismatch,
+  sumDeliveryInFromOrderMoneyEvents,
+  sumPickupOutFromOrderMoneyEvents,
+} from "@/lib/mandoub-money";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +28,10 @@ function formatShopWithCustomer(
   return `${shop}(${cust})`;
 }
 
-type Props = { params: Promise<{ day: string }> };
+type Props = {
+  params: Promise<{ day: string }>;
+  searchParams: Promise<{ q?: string }>;
+};
 
 export async function generateMetadata({ params }: Props) {
   const { day } = await params;
@@ -32,8 +41,10 @@ export async function generateMetadata({ params }: Props) {
   };
 }
 
-export default async function ArchivedOrdersDayPage({ params }: Props) {
+export default async function ArchivedOrdersDayPage({ params, searchParams }: Props) {
   const { day: rawDay } = await params;
+  const sp = await searchParams;
+  const q = (sp.q ?? "").trim();
   const day = decodeURIComponent(rawDay);
   const range = baghdadDayRangeUtc(day);
   if (!range) notFound();
@@ -43,9 +54,22 @@ export default async function ArchivedOrdersDayPage({ params }: Props) {
     archivedAt: { gte: range.gte, lt: range.lt },
   };
 
+  if (q) {
+    where.OR = [
+      { customerPhone: { contains: q } },
+      { orderType: { contains: q, mode: "insensitive" } },
+      { shop: { name: { contains: q, mode: "insensitive" } } },
+      { courier: { name: { contains: q, mode: "insensitive" } } },
+    ];
+    const asNum = parseInt(q, 10);
+    if (!Number.isNaN(asNum) && String(asNum) === q) {
+      where.OR.push({ orderNumber: asNum });
+    }
+  }
+
   const orders = await prisma.order.findMany({
     where,
-    orderBy: { archivedAt: "desc" },
+    orderBy: { orderNumber: "desc" },
     include: {
       shop: { include: { region: true } },
       customerRegion: true,
@@ -73,7 +97,7 @@ export default async function ArchivedOrdersDayPage({ params }: Props) {
     regionName: o.customerRegion?.name ?? o.shop.region.name,
     orderType: o.orderType || "—",
     routeModeLabel: o.routeMode === "double" ? "وجهتين" : "",
-    totalLabel: o.totalAmount != null ? formatDinarAsAlf(o.totalAmount) : "—",
+    totalLabel: o.orderSubtotal != null ? formatDinarAsAlf(o.orderSubtotal) : "—",
     deliveryLabel: o.deliveryPrice != null ? formatDinarAsAlf(o.deliveryPrice) : "—",
     customerPhone: o.customerPhone || "—",
     courierName: o.courier?.name ?? "—",
@@ -82,6 +106,18 @@ export default async function ArchivedOrdersDayPage({ params }: Props) {
       o.customerLocationUrl,
       o.customer?.customerLocationUrl,
     ),
+    summary: o.summary,
+    preparerShoppingJson: o.preparerShoppingJson,
+    wardMismatchType: isWardMismatch(
+      o.status,
+      o.totalAmount,
+      sumDeliveryInFromOrderMoneyEvents(o.moneyEvents),
+    ).type,
+    saderMismatchType: isSaderMismatch(
+      o.status,
+      o.orderSubtotal,
+      sumPickupOutFromOrderMoneyEvents(o.moneyEvents),
+    ).type,
   }));
 
   return (
@@ -95,18 +131,27 @@ export default async function ArchivedOrdersDayPage({ params }: Props) {
           الرئيسية
         </Link>
       </p>
-      <div>
-        <h1 className={ad.h1}>{formatBaghdadDateLabel(day)}</h1>
-        <p className={`mt-1 ${ad.muted}`}>
-          طلبات أُرشِفت في هذا اليوم (بغداد). يمكن استعادتها بتغيير الحالة من التعديل أو الجدول أدناه.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className={ad.h1}>{formatBaghdadDateLabel(day)}</h1>
+          <p className={`mt-1 ${ad.muted}`}>
+            طلبات أُرشِفت في هذا اليوم مرتبة تسلسلياً (يظهر المندوب الذي قام بالتوصيل).
+          </p>
+        </div>
+        <form className="flex-1 max-w-sm">
+          <input
+            name="q"
+            defaultValue={q}
+            placeholder="بحث (محل، رقم طلب، مندوب)..."
+            className={ad.input}
+          />
+        </form>
       </div>
 
       <div className="space-y-3">
         <OrderTrackingBulkTable rows={tableRows} couriers={couriers} />
         <p className={ad.orderListCountFooter}>
-          عدد الطلبات:{" "}
-          <span className="font-bold text-sky-900">{tableRows.length}</span>
+          عدد الطلبات: <span className="font-bold text-sky-900">{tableRows.length}</span>
         </p>
       </div>
     </div>

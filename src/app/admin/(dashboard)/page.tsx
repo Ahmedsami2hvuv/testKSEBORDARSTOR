@@ -1,5 +1,6 @@
 import { testTelegramAction } from "./actions";
 import { AdminHubDashboard } from "./admin-hub-dashboard";
+import { AdminProfitsWidget } from "./admin-profits-widget";
 
 export const metadata = {
   title: "لوحة الرئيسية — أبو الأكبر للتوصيل",
@@ -46,6 +47,8 @@ export default async function AdminHomePage({ searchParams }: Props) {
           </button>
         </form>
       </section>
+
+      <AdminProfitsWidget />
     </div>
   );
 }

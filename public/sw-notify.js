@@ -1,4 +1,4 @@
-/* Minimal service worker: OS tray notifications + open URL on tap */
+/* Enhanced Service Worker for Notifications - KSE BORDAR */
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
 });
@@ -10,11 +10,12 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("push", (event) => {
   const origin = self.location.origin;
   const icon = origin + "/pwa-icon-192.png";
+
   const defaults = {
-    title: "إشعار",
-    body: "",
-    url: origin + "/",
-    tag: "kse-push",
+    title: "إشعار جديد — أبو الأكبر",
+    body: "لديك تحديث جديد في النظام، اضغط للمتابعة.",
+    url: origin + "/mandoub",
+    tag: "kse-order-alert",
   };
 
   event.waitUntil(
@@ -22,60 +23,65 @@ self.addEventListener("push", (event) => {
       let payload = { ...defaults };
       if (event.data) {
         try {
-          /* قراءة واحدة فقط: text() ثم JSON — يتوافق مع json() كـ Promise ولا يستهلك الـ stream مرتين */
-          const maybeText = event.data.text();
-          const text =
-            maybeText && typeof maybeText.then === "function" ? await maybeText : maybeText;
-          if (text && typeof text === "string" && text.trim()) {
-            const parsed = JSON.parse(text);
-            if (parsed && typeof parsed === "object") {
-              payload = { ...payload, ...parsed };
-            }
+          const data = event.data.json();
+          if (data && typeof data === "object") {
+            payload = { ...payload, ...data };
           }
-        } catch {
-          /* ignore */
+        } catch (e) {
+          payload.body = event.data.text() || defaults.body;
         }
       }
-      const title = typeof payload.title === "string" && payload.title.trim() ? payload.title : defaults.title;
-      const body = typeof payload.body === "string" ? payload.body : "";
-      const tag = typeof payload.tag === "string" && payload.tag.trim() ? payload.tag : defaults.tag;
-      const openUrl =
-        typeof payload.url === "string" && payload.url.trim() ? payload.url : defaults.url;
-      await self.registration.showNotification(title, {
-        body,
-        tag,
-        icon,
-        badge: icon,
-        data: { url: openUrl },
-      });
+
+      // خيارات الإشعار المتقدمة
+      const options = {
+        body: payload.body,
+        tag: payload.tag, // التاج يمنع تكرار الإشعارات المزعجة لنفس الطلب
+        icon: icon,
+        badge: icon, // الأيقونة الصغيرة في شريط الحالة (أندرويد)
+        vibrate: [500, 110, 500, 110, 450, 110, 200, 110], // نمط اهتزاز تنبيهي قوي
+        renotify: true, // يضمن الاهتزاز حتى لو كان هناك إشعار سابق
+        requireInteraction: true, // يبقى الإشعار ظاهراً حتى يتفاعل معه المستخدم
+        data: { url: payload.url },
+        dir: 'rtl',
+        lang: 'ar',
+        // إضافة أزرار سريعة داخل الإشعار
+        actions: [
+          { action: 'open', title: 'فتح الطلب ✅' },
+          { action: 'close', title: 'تجاهل' }
+        ]
+      };
+
+      return self.registration.showNotification(payload.title, options);
     })(),
   );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+
+  if (event.action === 'close') return;
+
   const data = event.notification.data || {};
-  const raw = typeof data.url === "string" ? data.url : "/";
-  let target;
+  const rawUrl = data.url || "/";
+
+  let targetUrl;
   try {
-    target = raw.startsWith("http") ? raw : new URL(raw, self.location.origin).href;
+    targetUrl = rawUrl.startsWith("http") ? rawUrl : new URL(rawUrl, self.location.origin).href;
   } catch {
-    target = self.location.origin + "/";
+    targetUrl = self.location.origin + "/";
   }
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      // إذا كان الموقع مفتوحاً، نركز عليه ونوجهه للرابط
       for (const client of windowClients) {
-        if (!client.url.startsWith(self.location.origin)) continue;
-        if ("navigate" in client && typeof client.navigate === "function") {
-          return client
-            .navigate(target)
-            .then(() => client.focus())
-            .catch(() => self.clients.openWindow(target));
+        if (client.url.startsWith(self.location.origin) && "focus" in client) {
+          return client.navigate(targetUrl).then(c => c.focus());
         }
       }
+      // إذا كان مغلقاً، نفتح نافذة جديدة
       if (self.clients.openWindow) {
-        return self.clients.openWindow(target);
+        return self.clients.openWindow(targetUrl);
       }
     }),
   );

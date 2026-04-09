@@ -91,6 +91,9 @@ export function OrderTrackingBulkTable({
           hasMoneyDeletedBadge: false,
           prepaidAll: false,
           reversePickup: isReversePickupOrderType(r.orderType),
+          wardMismatchType: r.wardMismatchType,
+          saderMismatchType: r.saderMismatchType,
+          createdAt: r.createdAt,
         };
       }),
     [rows],
@@ -117,6 +120,15 @@ export function OrderTrackingBulkTable({
     });
   }
 
+  function selectByVisibleStatus(status: string) {
+    const next = new Set<string>();
+    for (const r of rows) {
+      if (status !== "all" && r.orderStatus !== status) continue;
+      next.add(r.id);
+    }
+    setSelected(next);
+  }
+
   function selectMatchingQuickFilters() {
     const next = new Set<string>();
     for (const r of rows) {
@@ -137,7 +149,6 @@ export function OrderTrackingBulkTable({
     setSelected(new Set());
   }
 
-  // بعد نجاح الإجراء، نُفرغ التحديد
   useEffect(() => {
     if (bulkState.ok) setSelected(new Set());
   }, [bulkState.ok]);

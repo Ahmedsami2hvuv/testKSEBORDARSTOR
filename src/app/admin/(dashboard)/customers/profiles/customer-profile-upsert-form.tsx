@@ -59,8 +59,7 @@ export function CustomerProfileUpsertForm({
             className={`${ad.input} font-mono tabular-nums`}
           />
           <span className="text-xs text-slate-500">
-            سجل واحد لكل (رقم + منطقة). إن وُجد يُحدَّث اللوكيشن، أقرب نقطة، الرقم الثاني،
-            الملاحظات، وصورة الباب إن رفعت صورة جديدة.
+            يتم التحقق من (رقم الهاتف + المنطقة). إذا كان الزبون مسجلاً مسبقاً في نفس المنطقة، سيقوم النظام بتنبيهك.
           </span>
         </label>
         <label className="flex flex-col gap-1 text-sm sm:col-span-2">
@@ -117,7 +116,6 @@ export function CustomerProfileUpsertForm({
             name="photo"
             type="file"
             accept="image/jpeg,image/png,image/webp"
-            capture="environment"
             className={ad.input}
           />
           <span className="text-xs text-slate-500">

@@ -1,12 +1,11 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState, useRef } from "react";
 import { ad } from "@/lib/admin-ui";
 import {
   ADMIN_OFFICE_LABEL,
   ADMIN_PHONE_FROM_SHOP_LOCAL,
   ADMIN_PHONE_ONE_FACE_LOCAL,
-  ADMIN_PHONE_SUPPORT_FOOTER_LOCAL,
 } from "@/lib/admin-order-from-admin-constants";
 import { normalizeIraqMobileLocal11 } from "@/lib/whatsapp";
 import { RegionSearchPicker } from "@/components/region-search-picker";
@@ -17,6 +16,10 @@ import {
 } from "@/components/shop-customer-search-picker";
 import { ClientVoiceNoteField } from "@/app/client/order/client-voice-note-field";
 import { createAdminOrder, type AdminCreateOrderState } from "./actions";
+import { extractPhoneNumberFromText, parseSiteOrderMessage } from "@/lib/site-order-parse";
+import { parseFlexibleOrderLines } from "@/lib/flexible-order-parse";
+import { normalizeRegionNameForMatch } from "@/lib/region-name-normalize";
+import { formatDinarAsAlfWithUnit } from "@/lib/money-alf";
 
 type ShopOpt = { id: string; name: string; regionId: string; locationUrl: string };
 type RegionOpt = { id: string; name: string };
@@ -32,9 +35,11 @@ type CustomerPrefill = {
   customerDoorPhotoUrl: string | null;
 };
 
+type RegionHit = { id: string; name: string; deliveryPrice: string };
+
 const initialState: AdminCreateOrderState = {};
 
-type SubmissionMode = "from_shop" | "admin_one_face" | "two_faces";
+type SubmissionMode = "from_shop" | "admin_one_face" | "two_faces" | "prep_draft";
 
 function doorPhotoUrlForDisplay(url: string | null | undefined): string | null {
   const u = url?.trim();
@@ -48,11 +53,13 @@ export function AdminCreateOrderForm({
   regions,
   customers,
   employees,
+  preparers,
 }: {
   shops: ShopOpt[];
   regions: RegionOpt[];
   customers: CustomerPrefill[];
   employees: EmployeeOpt[];
+  preparers: Array<{ id: string; name: string; availableForAssignment: boolean }>;
 }) {
   const [state, formAction, pending] = useActionState(createAdminOrder, initialState);
 
@@ -79,6 +86,24 @@ export function AdminCreateOrderForm({
 
   const [firstSavedDoorPhotoUrl, setFirstSavedDoorPhotoUrl] = useState<string | null>(null);
   const [secondSavedDoorPhotoUrl, setSecondSavedDoorPhotoUrl] = useState<string | null>(null);
+
+  // --- Prep Draft State ---
+  const [pasteText, setPasteText] = useState("");
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [titleLine, setTitleLine] = useState("");
+  const [products, setProducts] = useState<string[]>([]);
+  const [rawListText, setRawListText] = useState("");
+  const [prepCustomerPhone, setPrepCustomerPhone] = useState("");
+  const [prepOrderTime, setPrepOrderTime] = useState("فوري");
+  const [selectedPreparerIds, setSelectedPreparerIds] = useState<string[]>([]);
+  const [prepRegionQ, setPrepRegionQ] = useState("");
+  const [prepHits, setPrepHits] = useState<RegionHit[]>([]);
+  const [prepSelectedRegion, setPrepSelectedRegion] = useState<RegionHit | null>(null);
+  const regionSearchRef = useRef<HTMLInputElement>(null);
+
+  const togglePreparer = (id: string) => {
+    setSelectedPreparerIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
 
   const routeMode = submissionMode === "two_faces" ? "double" : "single";
 
@@ -110,6 +135,8 @@ export function AdminCreateOrderForm({
       setSecondRegionId("");
       setSecondLocationUrl("");
       setSecondLandmark("");
+    } else if (submissionMode === "prep_draft") {
+       // Optional reset
     } else {
       setFirstSavedDoorPhotoUrl(null);
       setSecondSavedDoorPhotoUrl(null);
@@ -132,6 +159,26 @@ export function AdminCreateOrderForm({
     setSelectedEmployeeId("");
     setFirstSavedDoorPhotoUrl(null);
   }, [shopId, submissionMode]);
+
+  // Prep Region Search
+  useEffect(() => {
+    if (prepRegionQ.trim().length < 2) {
+      setPrepHits([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const r = await fetch(`/api/regions/search?q=${encodeURIComponent(prepRegionQ.trim())}`);
+          const j = (await r.json()) as { regions?: RegionHit[] };
+          setPrepHits(j.regions ?? []);
+        } catch {
+          setPrepHits([]);
+        }
+      })();
+    }, 280);
+    return () => clearTimeout(t);
+  }, [prepRegionQ]);
 
   function pickEmployee(emp: EmployeeOpt) {
     setRecipientKind("employee");
@@ -192,10 +239,102 @@ export function AdminCreateOrderForm({
     if (!secondPrefill) setSecondSavedDoorPhotoUrl(null);
   }, [secondPrefill]);
 
+  // --- Prep Parse Logic ---
+  function extractRegionCandidates(rawText: string, knownProducts?: string[]) {
+    const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const productSet = new Set((knownProducts ?? []).map((x) => x.trim()).filter(Boolean));
+    return lines.filter((line) => {
+      if (line.length < 2) return false;
+      if (/\d/.test(line)) return false;
+      if (productSet.has(line)) return false;
+      if (line.includes("كيلو") || line.includes("قطعة") || line.includes("حبة")) return false;
+      return true;
+    });
+  }
+
+  async function resolveRegionAfterParse(rawText: string, fallbackTitle: string, knownProducts?: string[]) {
+    const candidates = extractRegionCandidates(rawText, knownProducts);
+    const fallback = fallbackTitle.trim();
+    if (fallback && fallback.length >= 2 && !candidates.includes(fallback)) candidates.unshift(fallback);
+    const limited = candidates.slice(0, 6);
+    for (const cand of limited) {
+      const qq = cand.trim();
+      if (qq.length < 2) continue;
+      try {
+        const r = await fetch(`/api/regions/search?q=${encodeURIComponent(qq)}`);
+        const j = (await r.json()) as { regions?: RegionHit[] };
+        const list = j.regions ?? [];
+        if (list.length === 1) {
+          setPrepSelectedRegion(list[0]!);
+          setPrepRegionQ(list[0]!.name);
+          setTitleLine(list[0]!.name);
+          return;
+        }
+        const normTitle = normalizeRegionNameForMatch(qq);
+        const exact = list.find((x) => normalizeRegionNameForMatch(x.name) === normTitle);
+        if (exact) {
+          setPrepSelectedRegion(exact);
+          setPrepRegionQ(exact.name);
+          setTitleLine(exact.name);
+          return;
+        }
+      } catch {}
+    }
+  }
+
+  function runParse() {
+    setParseError(null);
+    const t = pasteText.trim();
+    if (!t) {
+      setParseError("الصق نص الطلب أولاً.");
+      return;
+    }
+    const site = parseSiteOrderMessage(t);
+    if (site && site.items.length > 0) {
+      const title = (site.address || site.landmark || "طلب موقع").trim();
+      const phone = extractPhoneNumberFromText(t) ?? "";
+      setTitleLine(title);
+      setProducts(site.items.map((it) => `${it.name.trim()} ${it.qty}`.trim()));
+      setPrepCustomerPhone(phone);
+      setRawListText(t);
+      setPrepRegionQ(title);
+      setPrepSelectedRegion(null);
+      void resolveRegionAfterParse(t, title, site.items.map((it) => `${it.name.trim()} ${it.qty}`.trim()));
+      return;
+    }
+    const flex = parseFlexibleOrderLines(t);
+    if (flex) {
+      setTitleLine(flex.title);
+      setProducts([...flex.products]);
+      setPrepCustomerPhone(flex.phone);
+      setRawListText(t);
+      setPrepRegionQ(flex.title);
+      setPrepSelectedRegion(null);
+      void resolveRegionAfterParse(t, flex.title, flex.products);
+      return;
+    }
+    setParseError("تعذّر تحليل النص. تأكد من وجود عنوان ورقم زبون ومنتجات.");
+  }
+
   const canSubmit =
     !pending &&
-    (submissionMode !== "two_faces" || Boolean(defaultDoubleShopId)) &&
-    (submissionMode !== "from_shop" || Boolean(shopId.trim()));
+    (submissionMode === "prep_draft"
+      ? (products.length > 0 && selectedPreparerIds.length > 0 && Boolean(prepSelectedRegion))
+      : (
+        (submissionMode !== "two_faces" || Boolean(defaultDoubleShopId)) &&
+        (submissionMode !== "from_shop" || Boolean(shopId.trim()))
+      )
+    );
+
+  if (state.ok) {
+     return (
+       <div className="rounded-2xl border border-emerald-300 bg-white p-6 text-center shadow-lg">
+         <h2 className="text-xl font-black text-emerald-800">تمت العملية بنجاح</h2>
+         <p className="mt-2 text-sm text-slate-700">تم {submissionMode === "prep_draft" ? "إرسال طلب التجهيز للمجهز" : "إنشاء الطلب"} بنجاح.</p>
+         <button onClick={() => window.location.reload()} className="mt-6 rounded-xl bg-slate-900 px-6 py-2 text-sm font-bold text-white shadow-sm hover:bg-slate-800 transition">إضافة طلب آخر</button>
+       </div>
+     );
+  }
 
   return (
     <form action={formAction} className="space-y-4" encType="multipart/form-data">
@@ -204,7 +343,7 @@ export function AdminCreateOrderForm({
       <input type="hidden" name="linkedCustomerId" value={selectedEmployeeId} />
 
       <div className="rounded-xl border border-sky-200 bg-white/70 p-3">
-        <p className="text-sm font-bold text-slate-800">نوع المسار</p>
+        <p className="text-sm font-bold text-slate-800">نوع المسار / الطلب</p>
         <div className="mt-2 flex flex-col gap-3">
           <label className="inline-flex max-w-full items-start gap-2 text-sm leading-snug">
             <input
@@ -215,7 +354,7 @@ export function AdminCreateOrderForm({
               className="mt-0.5 shrink-0"
             />
             <span>
-              <strong>رفع من محل</strong> — ابحث عن المحل، ثم اختر العميل كزر جاهز أو «الإدارة»، ثم أكمل الطلب.
+              <strong>رفع من محل</strong> — ابحث عن المحل، ثم اختر العميل كزر جاهز أو «الإدارة».
             </span>
           </label>
           <label className="inline-flex max-w-full items-start gap-2 text-sm leading-snug">
@@ -227,7 +366,7 @@ export function AdminCreateOrderForm({
               className="mt-0.5 shrink-0"
             />
             <span>
-              <strong>وجهة واحدة (إداري)</strong> — طلبية مباشرة بدون محل. يتم إدخال تفاصيل الزبون والطلبية فقط.
+              <strong>وجهة واحدة (إداري)</strong> — طلبية مباشرة بدون محل.
             </span>
           </label>
           <label className="inline-flex max-w-full items-start gap-2 text-sm leading-snug">
@@ -239,342 +378,336 @@ export function AdminCreateOrderForm({
               className="mt-0.5 shrink-0"
             />
             <span>
-              <strong>وجهتان</strong> — مرسل ومستلم (رقم ومنطقة لكل وجهة)، مع نوع الطلب والسعر والتفاصيل.
+              <strong>وجهتان</strong> — مرسل ومستلم (رقم ومنطقة لكل وجهة).
             </span>
           </label>
-        </div>
-      </div>
-
-      {submissionMode === "from_shop" ? (
-        <div className="space-y-4">
-          <div>
-            <ShopSearchPicker
-              shops={shops}
-              fieldName="shopId"
-              label="المحل"
-              required
-              value={shopId}
-              onValueChange={setShopId}
-            />
-            <span className="text-[11px] leading-snug text-slate-500 block mt-1">
-              ابحث عن اسم المحل واختر من النتائج.
-            </span>
-          </div>
-          <ShopEmployeeQuickPick
-            shopId={shopId}
-            employees={employees}
-            selectedEmployeeId={selectedEmployeeId}
-            recipientKind={recipientKind}
-            onPickEmployee={pickEmployee}
-            onPickAdminOffice={pickAdminOffice}
-          />
-        </div>
-      ) : null}
-
-      {submissionMode === "admin_one_face" ? (
-        <div className="rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2 text-sm text-violet-950">
-          وضع <strong>وجهة واحدة</strong>: لا يتطلب اختيار محل. أدخل تفاصيل الزبون ونوع الطلبية والسعر.
-        </div>
-      ) : null}
-
-      {submissionMode === "two_faces" && !defaultDoubleShopId ? (
-        <p className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-900">
-          لا يوجد محل مسجّل — أضف محلاً واحداً على الأقل لاستخدام طلبات الوجهتين.
-        </p>
-      ) : submissionMode === "two_faces" ? (
-        <div className="rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2 text-sm text-violet-950">
-          مسار <strong>مرسل → مستلم</strong>: لا يظهر اختيار المحل؛ يُربَط الطلب داخلياً بأول محل للتسعير
-          فقط.
-        </div>
-      ) : null}
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="flex flex-col gap-1.5 text-base sm:text-lg">
-          <span className={`${ad.label} text-base sm:text-lg`}>نوع الطلب</span>
-          <input
-            name="orderType"
-            required
-            autoFocus
-            className={`${ad.input} min-h-[52px] text-lg sm:text-xl`}
-            placeholder="مثال: مستلزمات / مستندات / طلب خاص"
-            value={orderType}
-            onChange={(e) => setOrderType(e.target.value)}
-          />
-        </label>
-        <label className="flex flex-col gap-1.5 text-base sm:text-lg">
-          <span className={`${ad.label} text-base sm:text-lg`}>سعر الطلب</span>
-          <input
-            name="orderSubtotal"
-            required
-            className={`${ad.input} min-h-[52px] text-lg font-semibold tabular-nums sm:text-xl`}
-            placeholder="مثال: 10 أو 10.5"
-            inputMode="decimal"
-            value={orderSubtotal}
-            onChange={(e) => setOrderSubtotal(e.target.value)}
-          />
-        </label>
-      </div>
-
-      <label className="flex flex-col gap-1 text-sm">
-        <span className={ad.label}>وقت الطلب (إجباري)</span>
-        <input
-          name="orderNoteTime"
-          required
-          className={ad.input}
-          placeholder="مثال: الساعة 8 مساءً"
-          value={orderNoteTime}
-          onChange={(e) => setOrderNoteTime(e.target.value)}
-        />
-      </label>
-
-      <label className="flex flex-col gap-1 text-sm">
-        <span className={ad.label}>ملاحظات / تفاصيل</span>
-        <textarea
-          name="summary"
-          rows={3}
-          className={ad.input}
-          value={summary}
-          onChange={(e) => setSummary(e.target.value)}
-        />
-      </label>
-
-      <section className="space-y-3 rounded-2xl border border-sky-200 bg-sky-50/40 p-4">
-        <div>
-          <h2 className={ad.h2}>
-            {submissionMode === "two_faces"
-              ? "المرسل (الوجهة الأولى)"
-              : "الزبون (الوجهة)"}
-          </h2>
-          <p className="mt-1 text-xs text-slate-600">
-            أدخل الرقم والمنطقة — يُبحث عن بيانات محفوظة لنفس الرقم والمنطقة (لجلب لوكيشن الزبون).
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className={ad.label}>
-              {submissionMode === "two_faces" ? "رقم المرسل" : "رقم الزبون"}
-            </span>
+          <label className="inline-flex max-w-full items-start gap-2 text-sm leading-snug">
             <input
-              name="firstCustomerPhone"
-              className={ad.input}
-              value={firstPhone}
-              onChange={(e) => setFirstPhone(e.target.value)}
-              inputMode="numeric"
-              autoComplete="tel"
-              placeholder="اكتب أو الصق الرقم"
-              required
+              type="radio"
+              name="submissionModeUi"
+              checked={submissionMode === "prep_draft"}
+              onChange={() => setSubmissionMode("prep_draft")}
+              className="mt-0.5 shrink-0"
             />
+            <span>
+              <strong className="text-violet-700">طلب تجهيز (تحليل رسالة)</strong> — إرسال مسودة تسوق للمجهزين من خلال نص رسالة.
+            </span>
           </label>
-          <RegionSearchPicker
-            fieldName="firstCustomerRegionId"
-            label={submissionMode === "two_faces" ? "منطقة المرسل" : "منطقة الزبون"}
-            required
-            value={firstRegionId}
-            onValueChange={setFirstRegionId}
-            regionsLookup={regions}
-          />
         </div>
+      </div>
 
-        {firstPhoneNormalized && !firstRegionId.trim() ? (
-          <p className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs font-semibold text-amber-950">
-            اختر المنطقة لعرض ما إذا وُجدت بيانات محفوظة لهذا الرقم.
-          </p>
-        ) : null}
-
-        {firstPrefill ? (
-          <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
-            <p className="font-bold">هذا الرقم لديه بيانات محفوظة لهذا الرقم والمنطقة.</p>
+      {submissionMode === "prep_draft" ? (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-2 text-sm font-black text-slate-800">الصق نص الطلب هنا</h2>
+            <textarea
+              value={pasteText}
+              onChange={(ev) => setPasteText(ev.target.value)}
+              rows={5}
+              placeholder="الصق رسالة الموقع أو قائمة واتساب..."
+              className={`${ad.input} font-mono text-sm`}
+            />
             <button
               type="button"
-              className="mt-2 rounded-lg border border-emerald-400 bg-white px-3 py-1.5 text-xs font-bold hover:bg-emerald-100"
-              onClick={() => {
-                setFirstRegionId(firstPrefill.customerRegionId ?? "");
-                setFirstLocationUrl(firstPrefill.customerLocationUrl ?? "");
-                setFirstLandmark(firstPrefill.customerLandmark ?? "");
-                setFirstSavedDoorPhotoUrl(doorPhotoUrlForDisplay(firstPrefill.customerDoorPhotoUrl));
-              }}
+              onClick={runParse}
+              className="mt-3 w-full rounded-xl bg-violet-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-violet-700"
             >
-              نعم، استخدم التفاصيل المحفوظة
+              تحليل النص واستخراج البيانات
             </button>
+            {parseError ? <p className="mt-2 text-xs font-bold text-rose-600">{parseError}</p> : null}
           </div>
-        ) : null}
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className={ad.label}>
-              {submissionMode === "two_faces" ? "لوكيشن المرسل" : "لوكيشن الزبون"}
-            </span>
-            <input
-              name="firstCustomerLocationUrl"
-              className={ad.input}
-              value={firstLocationUrl}
-              onChange={(e) => setFirstLocationUrl(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className={ad.label}>
-              {submissionMode === "two_faces" ? "أقرب نقطة دالة (مرسل)" : "أقرب نقطة دالة"}
-            </span>
-            <input
-              name="firstCustomerLandmark"
-              className={ad.input}
-              value={firstLandmark}
-              onChange={(e) => setFirstLandmark(e.target.value)}
-            />
-          </label>
+          {products.length > 0 && (
+            <div className="space-y-4 rounded-2xl border border-sky-200 bg-sky-50/40 p-4">
+              <input type="hidden" name="rawListText" value={rawListText} />
+              <input type="hidden" name="productsCsv" value={products.join("\n")} />
+              <input type="hidden" name="customerRegionId" value={prepSelectedRegion?.id ?? ""} />
+
+              {/* تعديل هام: إرسال مصفوفة من الحقول المخفية ليتعرف عليها الخادم كمصفوفة */}
+              {selectedPreparerIds.map(id => (
+                <input key={id} type="hidden" name="preparerIds" value={id} />
+              ))}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1">
+                  <span className={ad.label}>عنوان الطلب</span>
+                  <input name="prepTitleLine" value={titleLine} onChange={(e) => setTitleLine(e.target.value)} className={ad.input} required />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className={ad.label}>رقم الزبون</span>
+                  <input name="prepCustomerPhone" value={prepCustomerPhone} onChange={(e) => setPrepCustomerPhone(e.target.value)} className={ad.input} required />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className={ad.label}>وقت الطلب</span>
+                  <input name="prepOrderTime" value={prepOrderTime} onChange={(e) => setPrepOrderTime(e.target.value)} className={ad.input} required />
+                </label>
+                <div className="relative">
+                  <span className={ad.label}>تأكيد المنطقة</span>
+                  <input
+                    ref={regionSearchRef}
+                    value={prepRegionQ}
+                    onChange={(ev) => { setPrepRegionQ(ev.target.value); setPrepSelectedRegion(null); }}
+                    className={ad.input}
+                    placeholder="ابحث بالمنطقة..."
+                  />
+                  {prepHits.length > 0 && !prepSelectedRegion ? (
+                    <ul className="absolute z-10 mt-1 max-h-40 w-full overflow-auto rounded-xl border border-slate-200 bg-white text-sm shadow-md">
+                      {prepHits.map((h) => (
+                        <li key={h.id}>
+                          <button type="button" className="w-full px-3 py-2 text-start text-slate-800 hover:bg-slate-50" onClick={() => { setPrepSelectedRegion(h); setPrepRegionQ(h.name); setPrepHits([]); }}>
+                            {h.name} <span className="text-xs text-slate-500 mr-2">({formatDinarAsAlfWithUnit(h.deliveryPrice)})</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <span className="text-sm font-bold text-slate-800 mb-2 block">إسناد للمجهزين (اختيار متعدد متاح)</span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {preparers.map((p) => {
+                    const isSelected = selectedPreparerIds.includes(p.id);
+                    return (
+                      <label key={p.id} className={`flex items-center gap-2 p-2 rounded-xl border cursor-pointer transition ${isSelected ? 'border-sky-500 bg-sky-50 ring-2 ring-sky-200' : 'border-slate-200 bg-white'}`}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => togglePreparer(p.id)}
+                          className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500"
+                        />
+                        <span className="text-[11px] font-bold text-slate-700">{p.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {selectedPreparerIds.length === 0 && (
+                    <p className="mt-2 text-[11px] text-rose-500 font-bold">يرجى اختيار مجهز واحد على الأقل.</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className={ad.label}>
-            {submissionMode === "two_faces" ? "صورة باب المرسل" : "صورة باب الزبون"}
-          </span>
-          <input
-            name="firstCustomerDoorPhoto"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            capture="environment"
-            className={ad.input}
-            onChange={(e) => {
-              if (e.target.files?.[0]) setFirstSavedDoorPhotoUrl(null);
-            }}
-          />
-        </label>
-        {firstSavedDoorPhotoUrl ? (
-          <div className="rounded-lg border border-emerald-200 bg-white p-2 text-sm shadow-sm">
-            <p className="text-xs font-medium text-slate-700">
-              صورة الباب المحفوظة — تُرفق مع الطلب إن لم تختر صورة جديدة أعلاه.
-            </p>
-            <img
-              src={firstSavedDoorPhotoUrl}
-              alt=""
-              className="mt-2 max-h-44 w-full max-w-xs rounded-md border border-slate-200 object-contain"
-            />
-          </div>
-        ) : null}
-      </section>
-
-      {submissionMode === "two_faces" ? (
-        <section className="space-y-3 rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
-          <div>
-            <h2 className={ad.h2}>المستلم (الوجهة الثانية)</h2>
-            <p className="mt-1 text-xs text-slate-600">
-              أدخل رقم المستلم ثم المنطقة — يُبحث عن بيانات محفوظة لنفس الرقم والمنطقة.
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className={ad.label}>رقم المستلم</span>
-              <input
-                name="secondCustomerPhone"
-                className={ad.input}
-                value={secondPhone}
-                onChange={(e) => setSecondPhone(e.target.value)}
-                inputMode="numeric"
-                autoComplete="tel"
-                placeholder="اكتب أو الصق الرقم"
-                required
+      ) : (
+        <>
+          {submissionMode === "from_shop" ? (
+            <div className="space-y-4">
+              <div>
+                <ShopSearchPicker
+                  shops={shops}
+                  fieldName="shopId"
+                  label="المحل"
+                  required
+                  value={shopId}
+                  onValueChange={setShopId}
+                />
+                <span className="text-[11px] leading-snug text-slate-500 block mt-1">
+                  ابحث عن اسم المحل واختر من النتائج.
+                </span>
+              </div>
+              <ShopEmployeeQuickPick
+                shopId={shopId}
+                employees={employees}
+                selectedEmployeeId={selectedEmployeeId}
+                recipientKind={recipientKind}
+                onPickEmployee={pickEmployee}
+                onPickAdminOffice={pickAdminOffice}
               />
-            </label>
-            <RegionSearchPicker
-              fieldName="secondCustomerRegionId"
-              label="منطقة المستلم"
-              required
-              value={secondRegionId}
-              onValueChange={setSecondRegionId}
-              regionsLookup={regions}
-            />
-          </div>
-
-          {secondPhoneNormalized && !secondRegionId.trim() ? (
-            <p className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs font-semibold text-amber-950">
-              اختر المنطقة لعرض التفاصيل المحفوظة (إن وُجدت) لهذا الرقم والمنطقة.
-            </p>
+            </div>
           ) : null}
 
-          {secondPrefill ? (
-            <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
-              <p className="font-bold">هذا الرقم لديه بيانات محفوظة لهذا الرقم والمنطقة.</p>
-              <button
-                type="button"
-                className="mt-2 rounded-lg border border-emerald-400 bg-white px-3 py-1.5 text-xs font-bold hover:bg-emerald-100"
-                onClick={() => {
-                  setSecondRegionId(secondPrefill.customerRegionId ?? "");
-                  setSecondLocationUrl(secondPrefill.customerLocationUrl ?? "");
-                  setSecondLandmark(secondPrefill.customerLandmark ?? "");
-                  setSecondSavedDoorPhotoUrl(doorPhotoUrlForDisplay(secondPrefill.customerDoorPhotoUrl));
-                }}
-              >
-                نعم، استخدم التفاصيل المحفوظة
-              </button>
+          {submissionMode === "admin_one_face" ? (
+            <div className="rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2 text-sm text-violet-950">
+              وضع <strong>وجهة واحدة</strong>: لا يتطلب اختيار محل. أدخل تفاصيل الزبون ونوع الطلبية والسعر.
+            </div>
+          ) : null}
+
+          {submissionMode === "two_faces" && !defaultDoubleShopId ? (
+            <p className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-900">
+              لا يوجد محل مسجّل — أضف محلاً واحداً على الأقل لاستخدام طلبات الوجهتين.
+            </p>
+          ) : submissionMode === "two_faces" ? (
+            <div className="rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2 text-sm text-violet-950">
+              مسار <strong>مرسل → مستلم</strong>: لا يظهر اختيار المحل؛ يُربَط الطلب داخلياً بأول محل للتسعير فقط.
             </div>
           ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className={ad.label}>لوكيشن المستلم</span>
+            <label className="flex flex-col gap-1.5 text-base sm:text-lg">
+              <span className={`${ad.label} text-base sm:text-lg`}>نوع الطلب</span>
               <input
-                name="secondCustomerLocationUrl"
-                className={ad.input}
-                value={secondLocationUrl}
-                onChange={(e) => setSecondLocationUrl(e.target.value)}
+                name="orderType"
+                required
+                className={`${ad.input} min-h-[52px] text-lg sm:text-xl`}
+                placeholder="مثال: مستلزمات / مستندات / طلب خاص"
+                value={orderType}
+                onChange={(e) => setOrderType(e.target.value)}
               />
             </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className={ad.label}>أقرب نقطة دالة (مستلم)</span>
+            <label className="flex flex-col gap-1.5 text-base sm:text-lg">
+              <span className={`${ad.label} text-base sm:text-lg`}>سعر الطلب</span>
               <input
-                name="secondCustomerLandmark"
-                className={ad.input}
-                value={secondLandmark}
-                onChange={(e) => setSecondLandmark(e.target.value)}
+                name="orderSubtotal"
+                required
+                className={`${ad.input} min-h-[52px] text-lg font-semibold tabular-nums sm:text-xl`}
+                placeholder="مثال: 10 أو 10.5"
+                inputMode="decimal"
+                value={orderSubtotal}
+                onChange={(e) => setOrderSubtotal(e.target.value)}
               />
             </label>
           </div>
+
           <label className="flex flex-col gap-1 text-sm">
-            <span className={ad.label}>صورة باب المستلم</span>
+            <span className={ad.label}>وقت الطلب (إجباري)</span>
             <input
-              name="secondCustomerDoorPhoto"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              capture="environment"
+              name="orderNoteTime"
+              required
               className={ad.input}
-              onChange={(e) => {
-                if (e.target.files?.[0]) setSecondSavedDoorPhotoUrl(null);
-              }}
+              placeholder="مثال: الساعة 8 مساءً"
+              value={orderNoteTime}
+              onChange={(e) => setOrderNoteTime(e.target.value)}
             />
           </label>
-          {secondSavedDoorPhotoUrl ? (
-            <div className="rounded-lg border border-emerald-200 bg-white p-2 text-sm shadow-sm">
-              <p className="text-xs font-medium text-slate-700">
-                صورة الباب المحفوظة — تُرفق مع الطلب إن لم تختر صورة جديدة أعلاه.
+
+          <label className="flex flex-col gap-1 text-sm">
+            <span className={ad.label}>ملاحظات / تفاصيل</span>
+            <textarea
+              name="summary"
+              rows={3}
+              className={ad.input}
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+            />
+          </label>
+
+          <section className="space-y-3 rounded-2xl border border-sky-200 bg-sky-50/40 p-4">
+            <div>
+              <h2 className={ad.h2}>
+                {submissionMode === "two_faces"
+                  ? "المرسل (الوجهة الأولى)"
+                  : "الزبون (الوجهة)"}
+              </h2>
+              <p className="mt-1 text-xs text-slate-600">
+                أدخل الرقم والمنطقة — يُبحث عن بيانات محفوظة لنفس الرقم والمنطقة.
               </p>
-              <img
-                src={secondSavedDoorPhotoUrl}
-                alt=""
-                className="mt-2 max-h-44 w-full max-w-xs rounded-md border border-slate-200 object-contain"
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className={ad.label}>
+                  {submissionMode === "two_faces" ? "رقم المرسل" : "رقم الزبون"}
+                </span>
+                <input
+                  name="firstCustomerPhone"
+                  className={ad.input}
+                  value={firstPhone}
+                  onChange={(e) => setFirstPhone(e.target.value)}
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  placeholder="اكتب أو الصق الرقم"
+                  required
+                />
+              </label>
+              <RegionSearchPicker
+                fieldName="firstCustomerRegionId"
+                label={submissionMode === "two_faces" ? "منطقة المرسل" : "منطقة الزبون"}
+                required
+                value={firstRegionId}
+                onValueChange={setFirstRegionId}
+                regionsLookup={regions}
               />
             </div>
-          ) : null}
-        </section>
-      ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-sm">
-          <span className={ad.label}>صورة الطلب</span>
-          <input
-            name="orderImage"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            capture="environment"
-            className={ad.input}
-          />
-        </label>
-        <ClientVoiceNoteField title="ملاحظة صوتية (تسجيل مباشر)" wrapperClassName="" />
-      </div>
+            {firstPrefill ? (
+              <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
+                <p className="font-bold">هذا الرقم لديه بيانات محفوظة.</p>
+                <button
+                  type="button"
+                  className="mt-2 rounded-lg border border-emerald-400 bg-white px-3 py-1.5 text-xs font-bold hover:bg-emerald-100"
+                  onClick={() => {
+                    setFirstRegionId(firstPrefill.customerRegionId ?? "");
+                    setFirstLocationUrl(firstPrefill.customerLocationUrl ?? "");
+                    setFirstLandmark(firstPrefill.customerLandmark ?? "");
+                    setFirstSavedDoorPhotoUrl(doorPhotoUrlForDisplay(firstPrefill.customerDoorPhotoUrl));
+                  }}
+                >
+                  استخدم التفاصيل المحفوظة
+                </button>
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className={ad.label}>
+                  {submissionMode === "two_faces" ? "لوكيشن المرسل" : "لوكيشن الزبون"}
+                </span>
+                <input
+                  name="firstCustomerLocationUrl"
+                  className={ad.input}
+                  value={firstLocationUrl}
+                  onChange={(e) => setFirstLocationUrl(e.target.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className={ad.label}>
+                  {submissionMode === "two_faces" ? "أقرب نقطة دالة (مرسل)" : "أقرب نقطة دالة"}
+                </span>
+                <input
+                  name="firstCustomerLandmark"
+                  className={ad.input}
+                  value={firstLandmark}
+                  onChange={(e) => setFirstLandmark(e.target.value)}
+                />
+              </label>
+            </div>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className={ad.label}>صورة باب الزبون</span>
+              <input
+                name="firstCustomerDoorPhoto"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className={ad.input}
+                onChange={(e) => { if (e.target.files?.[0]) setFirstSavedDoorPhotoUrl(null); }}
+              />
+            </label>
+            {firstSavedDoorPhotoUrl && (
+              <img src={firstSavedDoorPhotoUrl} alt="" className="mt-2 max-h-44 w-full rounded-md object-contain border" />
+            )}
+          </section>
+
+          {submissionMode === "two_faces" && (
+            <section className="space-y-3 rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
+              <h2 className={ad.h2}>المستلم (الوجهة الثانية)</h2>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className={ad.label}>رقم المستلم</span>
+                  <input name="secondCustomerPhone" className={ad.input} value={secondPhone} onChange={(e) => setSecondPhone(e.target.value)} required />
+                </label>
+                <RegionSearchPicker fieldName="secondCustomerRegionId" label="منطقة المستلم" required value={secondRegionId} onValueChange={setSecondRegionId} regionsLookup={regions} />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input name="secondCustomerLocationUrl" className={ad.input} value={secondLocationUrl} onChange={(e) => setSecondLocationUrl(e.target.value)} placeholder="لوكيشن المستلم" />
+                <input name="secondCustomerLandmark" className={ad.input} value={secondLandmark} onChange={(e) => setSecondLandmark(e.target.value)} placeholder="نقطة دالة مستلم" />
+              </div>
+            </section>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className={ad.label}>صورة الطلب</span>
+              <input name="orderImage" type="file" accept="image/*" className={ad.input} />
+            </label>
+            <ClientVoiceNoteField title="ملاحظة صوتية" wrapperClassName="" />
+          </div>
+        </>
+      )}
 
       {state.error ? <p className={ad.error}>{state.error}</p> : null}
-      {state.ok ? <p className={ad.success}>تم إنشاء الطلب من الإدارة بنجاح.</p> : null}
 
-      <button type="submit" className={ad.btnPrimary} disabled={!canSubmit}>
-        {pending ? "جارٍ الإنشاء..." : "إنشاء الطلب"}
+      <button type="submit" className={ad.btnPrimary} disabled={!canSubmit || pending}>
+        {pending ? "جارٍ التنفيذ..." : (submissionMode === "prep_draft" ? "إرسال طلب التجهيز" : "إنشاء الطلب")}
       </button>
     </form>
   );
